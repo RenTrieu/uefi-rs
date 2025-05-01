@@ -85,7 +85,6 @@ mod nvme;
 mod pi;
 mod rng;
 mod scsi;
-mod shell_params;
 #[cfg(any(
     target_arch = "x86",
     target_arch = "x86_64",
@@ -93,6 +92,7 @@ mod shell_params;
     target_arch = "aarch64"
 ))]
 mod shell;
+mod shell_params;
 mod shim;
 mod string;
 mod tcg;
