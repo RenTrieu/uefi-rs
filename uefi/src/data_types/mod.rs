@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Data type definitions
 //!
 //! This module defines the basic data types that are used throughout uefi-rs
@@ -8,11 +10,22 @@ use core::ptr::{self, NonNull};
 /// Opaque handle to an UEFI entity (protocol, image...), guaranteed to be non-null.
 ///
 /// If you need to have a nullable handle (for a custom UEFI FFI for example) use `Option<Handle>`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(transparent)]
 pub struct Handle(NonNull<c_void>);
 
 impl Handle {
+    /// Creates a new [`Handle`].
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must be sure that the pointer
+    /// is valid. Otherwise, further operations on the object might result in
+    /// undefined behaviour, even if the methods aren't marked as unsafe.
+    #[must_use]
+    pub const unsafe fn new(ptr: NonNull<c_void>) -> Self {
+        Self(ptr)
+    }
+
     /// Creates a new [`Handle`] from a raw address. The address might
     /// come from the Multiboot2 information structure or something similar.
     ///
@@ -39,7 +52,7 @@ impl Handle {
 
     /// Get the underlying raw pointer.
     #[must_use]
-    pub fn as_ptr(&self) -> *mut c_void {
+    pub const fn as_ptr(&self) -> *mut c_void {
         self.0.as_ptr()
     }
 
@@ -51,17 +64,19 @@ impl Handle {
 /// Handle to an event structure, guaranteed to be non-null.
 ///
 /// If you need to have a nullable event, use `Option<Event>`.
+#[derive(Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[repr(transparent)]
-#[derive(Debug)]
 pub struct Event(NonNull<c_void>);
 
 impl Event {
     /// Clone this `Event`
     ///
     /// # Safety
-    /// When an event is closed by calling `BootServices::close_event`, that event and ALL references
+    /// When an event is closed by calling [`boot::close_event`], that event and ALL references
     /// to it are invalidated and the underlying memory is freed by firmware. The caller must ensure
     /// that any clones of a closed `Event` are never used again.
+    ///
+    /// [`boot::close_event`]: crate::boot::close_event
     #[must_use]
     pub const unsafe fn unsafe_clone(&self) -> Self {
         Self(self.0)
@@ -78,7 +93,7 @@ impl Event {
 
     /// Get the underlying raw pointer.
     #[must_use]
-    pub fn as_ptr(&self) -> *mut c_void {
+    pub const fn as_ptr(&self) -> *mut c_void {
         self.0.as_ptr()
     }
 }
@@ -86,8 +101,8 @@ impl Event {
 /// Trait for querying the alignment of a struct.
 ///
 /// For a statically-sized type the alignment can be retrieved with
-/// [`core::mem::align_of`]. For a dynamically-sized type (DST),
-/// [`core::mem::align_of_val`] provides the alignment given a reference. But in
+/// [`align_of`]. For a dynamically-sized type (DST),
+/// [`align_of_val`] provides the alignment given a reference. But in
 /// some cases it's helpful to know the alignment of a DST prior to having a
 /// value, meaning there's no reference to pass to `align_of_val`. For example,
 /// when using an API that creates a value using a `[u8]` buffer, the alignment
@@ -121,8 +136,7 @@ pub trait Align {
     /// is aligned. Returns `None` if no element of the buffer is
     /// aligned.
     fn align_buf(buf: &mut [u8]) -> Option<&mut [u8]> {
-        let addr = buf.as_ptr() as usize;
-        let offset = Self::offset_up_to_alignment(addr);
+        let offset = buf.as_ptr().align_offset(Self::alignment());
         buf.get_mut(offset..)
     }
 
@@ -130,7 +144,7 @@ pub trait Align {
     fn assert_aligned(storage: &mut [u8]) {
         if !storage.is_empty() {
             assert_eq!(
-                (storage.as_ptr() as usize) % Self::alignment(),
+                storage.as_ptr().align_offset(Self::alignment()),
                 0,
                 "The provided storage is not correctly aligned for this type"
             )
@@ -138,24 +152,35 @@ pub trait Align {
     }
 }
 
+impl Align for [u8] {
+    fn alignment() -> usize {
+        1
+    }
+}
+
 mod guid;
-pub use self::guid::{Guid, Identify};
+pub use guid::{Guid, Identify};
 
 pub mod chars;
-pub use self::chars::{Char16, Char8};
+pub use chars::{Char16, Char8};
 
 #[macro_use]
 mod opaque;
 
 mod strs;
-pub use self::strs::{
-    CStr16, CStr8, EqStrUntilNul, FromSliceWithNulError, FromStrWithBufError, UnalignedCStr16Error,
+pub use strs::{
+    CStr16, CStr8, EqStrUntilNul, FromSliceWithNulError, FromStrWithBufError, PoolString,
+    UnalignedCStr16Error,
 };
+
+/// These functions are used in the implementation of the [`cstr8`] macro.
+#[doc(hidden)]
+pub use strs::{str_num_latin1_chars, str_to_latin1};
 
 #[cfg(feature = "alloc")]
 mod owned_strs;
 #[cfg(feature = "alloc")]
-pub use self::owned_strs::{CString16, FromStrError};
+pub use owned_strs::{CString16, FromStrError};
 
 mod unaligned_slice;
 pub use unaligned_slice::UnalignedSlice;

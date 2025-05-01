@@ -1,17 +1,46 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+use uefi_raw::Status;
+
 use super::chars::{Char16, Char8, NUL_16, NUL_8};
 use super::UnalignedSlice;
+use crate::mem::PoolAllocation;
 use crate::polyfill::maybe_uninit_slice_assume_init_ref;
 use core::borrow::Borrow;
 use core::ffi::CStr;
-use core::iter::Iterator;
+use core::fmt::{self, Display, Formatter};
 use core::mem::MaybeUninit;
-use core::result::Result;
-use core::{fmt, slice};
+use core::ops::Deref;
+use core::ptr::NonNull;
+use core::{ptr, slice};
 
 #[cfg(feature = "alloc")]
 use super::CString16;
 
-/// Errors which can occur during checked `[uN]` -> `CStrN` conversions
+/// Error converting from a slice (which can contain interior nuls) to a string
+/// type.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FromSliceUntilNulError {
+    /// An invalid character was encountered before the end of the slice.
+    InvalidChar(usize),
+
+    /// The does not contain a nul character.
+    NoNul,
+}
+
+impl Display for FromSliceUntilNulError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidChar(usize) => write!(f, "invalid character at index {}", usize),
+            Self::NoNul => write!(f, "no nul character"),
+        }
+    }
+}
+
+impl core::error::Error for FromSliceUntilNulError {}
+
+/// Error converting from a slice (which cannot contain interior nuls) to a
+/// string type.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FromSliceWithNulError {
     /// An invalid character was encountered before the end of the slice
@@ -23,6 +52,18 @@ pub enum FromSliceWithNulError {
     /// The slice was not null-terminated
     NotNulTerminated,
 }
+
+impl Display for FromSliceWithNulError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidChar(usize) => write!(f, "invalid character at index {}", usize),
+            Self::InteriorNul(usize) => write!(f, "interior null character at index {}", usize),
+            Self::NotNulTerminated => write!(f, "not null-terminated"),
+        }
+    }
+}
+
+impl core::error::Error for FromSliceWithNulError {}
 
 /// Error returned by [`CStr16::from_unaligned_slice`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -41,6 +82,19 @@ pub enum UnalignedCStr16Error {
     BufferTooSmall,
 }
 
+impl Display for UnalignedCStr16Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidChar(usize) => write!(f, "invalid character at index {}", usize),
+            Self::InteriorNul(usize) => write!(f, "interior null character at index {}", usize),
+            Self::NotNulTerminated => write!(f, "not null-terminated"),
+            Self::BufferTooSmall => write!(f, "buffer too small"),
+        }
+    }
+}
+
+impl core::error::Error for UnalignedCStr16Error {}
+
 /// Error returned by [`CStr16::from_str_with_buf`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FromStrWithBufError {
@@ -55,6 +109,18 @@ pub enum FromStrWithBufError {
     BufferTooSmall,
 }
 
+impl Display for FromStrWithBufError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidChar(usize) => write!(f, "invalid character at index {}", usize),
+            Self::InteriorNul(usize) => write!(f, "interior null character at index {}", usize),
+            Self::BufferTooSmall => write!(f, "buffer too small"),
+        }
+    }
+}
+
+impl core::error::Error for FromStrWithBufError {}
+
 /// A null-terminated Latin-1 string.
 ///
 /// This type is largely inspired by [`core::ffi::CStr`] with the exception that all characters are
@@ -68,7 +134,7 @@ pub enum FromStrWithBufError {
 /// For convenience, a [`CStr8`] is comparable with [`core::str`] and
 /// `alloc::string::String` from the standard library through the trait [`EqStrUntilNul`].
 #[repr(transparent)]
-#[derive(Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct CStr8([Char8]);
 
 impl CStr8 {
@@ -82,11 +148,11 @@ impl CStr8 {
     #[must_use]
     pub unsafe fn from_ptr<'ptr>(ptr: *const Char8) -> &'ptr Self {
         let mut len = 0;
-        while *ptr.add(len) != NUL_8 {
+        while unsafe { *ptr.add(len) } != NUL_8 {
             len += 1
         }
         let ptr = ptr.cast::<u8>();
-        Self::from_bytes_with_nul_unchecked(slice::from_raw_parts(ptr, len + 1))
+        unsafe { Self::from_bytes_with_nul_unchecked(slice::from_raw_parts(ptr, len + 1)) }
     }
 
     /// Creates a CStr8 reference from bytes.
@@ -110,7 +176,7 @@ impl CStr8 {
     /// null-terminated string, with no interior null bytes.
     #[must_use]
     pub const unsafe fn from_bytes_with_nul_unchecked(chars: &[u8]) -> &Self {
-        &*(chars as *const [u8] as *const Self)
+        unsafe { &*(ptr::from_ref(chars) as *const Self) }
     }
 
     /// Returns the inner pointer to this CStr8.
@@ -123,7 +189,7 @@ impl CStr8 {
     /// character.
     #[must_use]
     pub const fn as_bytes(&self) -> &[u8] {
-        unsafe { &*(&self.0 as *const [Char8] as *const [u8]) }
+        unsafe { &*(ptr::from_ref(&self.0) as *const [u8]) }
     }
 }
 
@@ -135,7 +201,7 @@ impl fmt::Debug for CStr8 {
 
 impl fmt::Display for CStr8 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for c in self.0.iter() {
+        for c in &self.0[..&self.0.len() - 1] {
             <Char8 as fmt::Display>::fmt(c, f)?;
         }
         Ok(())
@@ -182,6 +248,93 @@ impl<'a> TryFrom<&'a CStr> for &'a CStr8 {
     }
 }
 
+/// Get a Latin-1 character from a UTF-8 byte slice at the given offset.
+///
+/// Returns a pair containing the Latin-1 character and the number of bytes in
+/// the UTF-8 encoding of that character.
+///
+/// Panics if the string cannot be encoded in Latin-1.
+///
+/// # Safety
+///
+/// The input `bytes` must be valid UTF-8.
+const unsafe fn latin1_from_utf8_at_offset(bytes: &[u8], offset: usize) -> (u8, usize) {
+    if bytes[offset] & 0b1000_0000 == 0b0000_0000 {
+        (bytes[offset], 1)
+    } else if bytes[offset] & 0b1110_0000 == 0b1100_0000 {
+        let a = (bytes[offset] & 0b0001_1111) as u16;
+        let b = (bytes[offset + 1] & 0b0011_1111) as u16;
+        let ch = (a << 6) | b;
+        if ch > 0xff {
+            panic!("input string cannot be encoded as Latin-1");
+        }
+        (ch as u8, 2)
+    } else {
+        // Latin-1 code points only go up to 0xff, so if the input contains any
+        // UTF-8 characters larger than two bytes it cannot be converted to
+        // Latin-1.
+        panic!("input string cannot be encoded as Latin-1");
+    }
+}
+
+/// Count the number of Latin-1 characters in a string.
+///
+/// Panics if the string cannot be encoded in Latin-1.
+///
+/// This is public but hidden; it is used in the `cstr8` macro.
+#[must_use]
+pub const fn str_num_latin1_chars(s: &str) -> usize {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+
+    let mut offset = 0;
+    let mut num_latin1_chars = 0;
+
+    while offset < len {
+        // SAFETY: `bytes` is valid UTF-8.
+        let (_, num_utf8_bytes) = unsafe { latin1_from_utf8_at_offset(bytes, offset) };
+        offset += num_utf8_bytes;
+        num_latin1_chars += 1;
+    }
+
+    num_latin1_chars
+}
+
+/// Convert a `str` into a null-terminated Latin-1 character array.
+///
+/// Panics if the string cannot be encoded in Latin-1.
+///
+/// This is public but hidden; it is used in the `cstr8` macro.
+#[must_use]
+pub const fn str_to_latin1<const N: usize>(s: &str) -> [u8; N] {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+
+    let mut output = [0; N];
+
+    let mut output_offset = 0;
+    let mut input_offset = 0;
+    while input_offset < len {
+        // SAFETY: `bytes` is valid UTF-8.
+        let (ch, num_utf8_bytes) = unsafe { latin1_from_utf8_at_offset(bytes, input_offset) };
+        if ch == 0 {
+            panic!("interior null character");
+        } else {
+            output[output_offset] = ch;
+            output_offset += 1;
+            input_offset += num_utf8_bytes;
+        }
+    }
+
+    // The output array must be one bigger than the converted string,
+    // to leave room for the trailing null character.
+    if output_offset + 1 != N {
+        panic!("incorrect array length");
+    }
+
+    output
+}
+
 /// An UCS-2 null-terminated string slice.
 ///
 /// This type is largely inspired by [`core::ffi::CStr`] with the exception that all characters are
@@ -189,7 +342,7 @@ impl<'a> TryFrom<&'a CStr> for &'a CStr8 {
 ///
 /// For convenience, a [`CStr16`] is comparable with [`core::str`] and
 /// `alloc::string::String` from the standard library through the trait [`EqStrUntilNul`].
-#[derive(Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[repr(transparent)]
 pub struct CStr16([Char16]);
 
@@ -204,11 +357,28 @@ impl CStr16 {
     #[must_use]
     pub unsafe fn from_ptr<'ptr>(ptr: *const Char16) -> &'ptr Self {
         let mut len = 0;
-        while *ptr.add(len) != NUL_16 {
+        while unsafe { *ptr.add(len) } != NUL_16 {
             len += 1
         }
         let ptr = ptr.cast::<u16>();
-        Self::from_u16_with_nul_unchecked(slice::from_raw_parts(ptr, len + 1))
+        unsafe { Self::from_u16_with_nul_unchecked(slice::from_raw_parts(ptr, len + 1)) }
+    }
+
+    /// Creates a `&CStr16` from a u16 slice, stopping at the first nul character.
+    ///
+    /// # Errors
+    ///
+    /// An error is returned if the slice contains invalid UCS-2 characters, or
+    /// if the slice does not contain any nul character.
+    pub fn from_u16_until_nul(codes: &[u16]) -> Result<&Self, FromSliceUntilNulError> {
+        for (pos, &code) in codes.iter().enumerate() {
+            let chr =
+                Char16::try_from(code).map_err(|_| FromSliceUntilNulError::InvalidChar(pos))?;
+            if chr == NUL_16 {
+                return Ok(unsafe { Self::from_u16_with_nul_unchecked(&codes[..=pos]) });
+            }
+        }
+        Err(FromSliceUntilNulError::NoNul)
     }
 
     /// Creates a `&CStr16` from a u16 slice, if the slice contains exactly
@@ -240,7 +410,57 @@ impl CStr16 {
     /// null-terminated string, with no interior null characters.
     #[must_use]
     pub const unsafe fn from_u16_with_nul_unchecked(codes: &[u16]) -> &Self {
-        &*(codes as *const [u16] as *const Self)
+        unsafe { &*(ptr::from_ref(codes) as *const Self) }
+    }
+
+    /// Creates a `&CStr16` from a [`Char16`] slice, stopping at the first nul character.
+    ///
+    /// # Errors
+    ///
+    /// An error is returned if the slice does not contain any nul character.
+    pub fn from_char16_until_nul(chars: &[Char16]) -> Result<&Self, FromSliceUntilNulError> {
+        // Find the index of the first null char.
+        let end = chars
+            .iter()
+            .position(|c| *c == NUL_16)
+            .ok_or(FromSliceUntilNulError::NoNul)?;
+
+        // Safety: the input is nul-terminated.
+        unsafe { Ok(Self::from_char16_with_nul_unchecked(&chars[..=end])) }
+    }
+
+    /// Creates a `&CStr16` from a [`Char16`] slice, if the slice is
+    /// null-terminated and has no interior null characters.
+    pub fn from_char16_with_nul(chars: &[Char16]) -> Result<&Self, FromSliceWithNulError> {
+        // Fail early if the input is empty.
+        if chars.is_empty() {
+            return Err(FromSliceWithNulError::NotNulTerminated);
+        }
+
+        // Find the index of the first null char.
+        if let Some(null_index) = chars.iter().position(|c| *c == NUL_16) {
+            // Verify the null character is at the end.
+            if null_index == chars.len() - 1 {
+                // Safety: the input is null-terminated and has no interior nulls.
+                Ok(unsafe { Self::from_char16_with_nul_unchecked(chars) })
+            } else {
+                Err(FromSliceWithNulError::InteriorNul(null_index))
+            }
+        } else {
+            Err(FromSliceWithNulError::NotNulTerminated)
+        }
+    }
+
+    /// Unsafely creates a `&CStr16` from a `Char16` slice.
+    ///
+    /// # Safety
+    ///
+    /// It's the callers responsibility to ensure chars is null-terminated and
+    /// has no interior null characters.
+    #[must_use]
+    pub const unsafe fn from_char16_with_nul_unchecked(chars: &[Char16]) -> &Self {
+        let ptr: *const [Char16] = chars;
+        unsafe { &*(ptr as *const Self) }
     }
 
     /// Convert a [`&str`] to a `&CStr16`, backed by a buffer.
@@ -297,7 +517,7 @@ impl CStr16 {
     pub fn from_unaligned_slice<'buf>(
         src: &UnalignedSlice<'_, u16>,
         buf: &'buf mut [MaybeUninit<u16>],
-    ) -> Result<&'buf CStr16, UnalignedCStr16Error> {
+    ) -> Result<&'buf Self, UnalignedCStr16Error> {
         // The input `buf` might be longer than needed, so get a
         // subslice of the required length.
         let buf = buf
@@ -309,7 +529,7 @@ impl CStr16 {
             // Safety: `copy_buf` fully initializes the slice.
             maybe_uninit_slice_assume_init_ref(buf)
         };
-        CStr16::from_u16_with_nul(buf).map_err(|e| match e {
+        Self::from_u16_with_nul(buf).map_err(|e| match e {
             FromSliceWithNulError::InvalidChar(v) => UnalignedCStr16Error::InvalidChar(v),
             FromSliceWithNulError::InteriorNul(v) => UnalignedCStr16Error::InteriorNul(v),
             FromSliceWithNulError::NotNulTerminated => UnalignedCStr16Error::NotNulTerminated,
@@ -344,7 +564,7 @@ impl CStr16 {
     /// Converts this C string to a u16 slice containing the trailing null.
     #[must_use]
     pub const fn to_u16_slice_with_nul(&self) -> &[u16] {
-        unsafe { &*(&self.0 as *const [Char16] as *const [u16]) }
+        unsafe { &*(ptr::from_ref(&self.0) as *const [u16]) }
     }
 
     /// Returns an iterator over this C string
@@ -364,7 +584,7 @@ impl CStr16 {
 
     /// Returns if the string is empty. This ignores the null character.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.num_chars() == 0
     }
 
@@ -372,6 +592,12 @@ impl CStr16 {
     #[must_use]
     pub const fn num_bytes(&self) -> usize {
         self.0.len() * 2
+    }
+
+    /// Checks if all characters in this string are within the ASCII range.
+    #[must_use]
+    pub fn is_ascii(&self) -> bool {
+        self.0.iter().all(|c| c.is_ascii())
     }
 
     /// Writes each [`Char16`] as a [`char`] (4 bytes long in Rust language) into the buffer.
@@ -400,7 +626,7 @@ impl CStr16 {
     /// Returns the underlying bytes as slice including the terminating null
     /// character.
     #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
+    pub const fn as_bytes(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self.0.as_ptr().cast(), self.num_bytes()) }
     }
 }
@@ -425,9 +651,9 @@ impl From<&CStr16> for alloc::string::String {
             .iter()
             .copied()
             .map(u16::from)
-            .map(|int| int as u32)
+            .map(u32::from)
             .map(|int| char::from_u32(int).expect("Should be encodable as UTF-8"))
-            .collect::<alloc::string::String>()
+            .collect::<Self>()
     }
 }
 
@@ -449,8 +675,8 @@ impl<StrType: AsRef<str> + ?Sized> EqStrUntilNul<StrType> for CStr16 {
     }
 }
 
-impl AsRef<CStr16> for CStr16 {
-    fn as_ref(&self) -> &CStr16 {
+impl AsRef<Self> for CStr16 {
+    fn as_ref(&self) -> &Self {
         self
     }
 }
@@ -497,7 +723,41 @@ impl PartialEq<CString16> for &CStr16 {
     }
 }
 
-impl<'a> UnalignedSlice<'a, u16> {
+/// UCS-2 string allocated from UEFI pool memory.
+///
+/// This is similar to a [`CString16`], but used for memory that was allocated
+/// internally by UEFI rather than the Rust allocator.
+///
+/// [`CString16`]: crate::CString16
+#[derive(Debug)]
+pub struct PoolString(PoolAllocation);
+
+impl PoolString {
+    /// Create a [`PoolString`] from a [`CStr16`] residing in a buffer allocated
+    /// using [`allocate_pool()`][cbap].
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the buffer points to a valid [`CStr16`] and
+    /// resides in a buffer allocated using [`allocate_pool()`][cbap]
+    ///
+    /// [cbap]: crate::boot::allocate_pool()
+    pub unsafe fn new(text: *const Char16) -> crate::Result<Self> {
+        NonNull::new(text.cast_mut())
+            .map(|p| Self(PoolAllocation::new(p.cast())))
+            .ok_or(Status::OUT_OF_RESOURCES.into())
+    }
+}
+
+impl Deref for PoolString {
+    type Target = CStr16;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { CStr16::from_ptr(self.0.as_ptr().as_ptr().cast()) }
+    }
+}
+
+impl UnalignedSlice<'_, u16> {
     /// Create a [`CStr16`] from an [`UnalignedSlice`] using an aligned
     /// buffer for storage. The lifetime of the output is tied to `buf`,
     /// not `self`.
@@ -541,8 +801,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{cstr16, cstr8};
+    use alloc::format;
     use alloc::string::String;
-    use uefi_macros::{cstr16, cstr8};
 
     // Tests if our CStr8 type can be constructed from a valid core::ffi::CStr
     #[test]
@@ -563,9 +824,129 @@ mod tests {
     }
 
     #[test]
+    fn test_cstr8_display() {
+        let s = cstr8!("abc");
+        assert_eq!(format!("{s}"), "abc");
+    }
+
+    #[test]
+    fn test_cstr16_display() {
+        let s = cstr16!("abc");
+        assert_eq!(format!("{s}"), "abc");
+    }
+
+    #[test]
     fn test_cstr16_num_bytes() {
         let s = CStr16::from_u16_with_nul(&[65, 66, 67, 0]).unwrap();
         assert_eq!(s.num_bytes(), 8);
+    }
+
+    #[test]
+    fn test_cstr16_from_u16_until_nul() {
+        // Invalid: empty input.
+        assert_eq!(
+            CStr16::from_u16_until_nul(&[]),
+            Err(FromSliceUntilNulError::NoNul)
+        );
+
+        // Invalid: no nul.
+        assert_eq!(
+            CStr16::from_u16_until_nul(&[65, 66]),
+            Err(FromSliceUntilNulError::NoNul)
+        );
+
+        // Invalid: not UCS-2.
+        assert_eq!(
+            CStr16::from_u16_until_nul(&[65, 0xde01, 0]),
+            Err(FromSliceUntilNulError::InvalidChar(1))
+        );
+
+        // Valid: trailing nul.
+        assert_eq!(CStr16::from_u16_until_nul(&[97, 98, 0,]), Ok(cstr16!("ab")));
+
+        // Valid: interior nul.
+        assert_eq!(
+            CStr16::from_u16_until_nul(&[97, 0, 98, 0,]),
+            Ok(cstr16!("a"))
+        );
+    }
+
+    #[test]
+    fn test_cstr16_from_char16_until_nul() {
+        // Invalid: empty input.
+        assert_eq!(
+            CStr16::from_char16_until_nul(&[]),
+            Err(FromSliceUntilNulError::NoNul)
+        );
+
+        // Invalid: no nul character.
+        assert_eq!(
+            CStr16::from_char16_until_nul(&[
+                Char16::try_from('a').unwrap(),
+                Char16::try_from('b').unwrap(),
+            ]),
+            Err(FromSliceUntilNulError::NoNul)
+        );
+
+        // Valid: trailing nul.
+        assert_eq!(
+            CStr16::from_char16_until_nul(&[
+                Char16::try_from('a').unwrap(),
+                Char16::try_from('b').unwrap(),
+                NUL_16,
+            ]),
+            Ok(cstr16!("ab"))
+        );
+
+        // Valid: interior nul.
+        assert_eq!(
+            CStr16::from_char16_until_nul(&[
+                Char16::try_from('a').unwrap(),
+                NUL_16,
+                Char16::try_from('b').unwrap(),
+                NUL_16
+            ]),
+            Ok(cstr16!("a"))
+        );
+    }
+
+    #[test]
+    fn test_cstr16_from_char16_with_nul() {
+        // Invalid: empty input.
+        assert_eq!(
+            CStr16::from_char16_with_nul(&[]),
+            Err(FromSliceWithNulError::NotNulTerminated)
+        );
+
+        // Invalid: interior null.
+        assert_eq!(
+            CStr16::from_char16_with_nul(&[
+                Char16::try_from('a').unwrap(),
+                NUL_16,
+                Char16::try_from('b').unwrap(),
+                NUL_16
+            ]),
+            Err(FromSliceWithNulError::InteriorNul(1))
+        );
+
+        // Invalid: no trailing null.
+        assert_eq!(
+            CStr16::from_char16_with_nul(&[
+                Char16::try_from('a').unwrap(),
+                Char16::try_from('b').unwrap(),
+            ]),
+            Err(FromSliceWithNulError::NotNulTerminated)
+        );
+
+        // Valid.
+        assert_eq!(
+            CStr16::from_char16_with_nul(&[
+                Char16::try_from('a').unwrap(),
+                Char16::try_from('b').unwrap(),
+                NUL_16,
+            ]),
+            Ok(cstr16!("ab"))
+        );
     }
 
     #[test]

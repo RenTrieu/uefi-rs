@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use super::{Error, Result};
 use core::fmt::Debug;
 
@@ -59,7 +61,7 @@ impl StatusExt for Status {
     #[inline]
     fn to_result_with_err<ErrData: Debug>(
         self,
-        err: impl FnOnce(Status) -> ErrData,
+        err: impl FnOnce(Self) -> ErrData,
     ) -> Result<(), ErrData> {
         if self.is_success() {
             Ok(())
@@ -72,7 +74,7 @@ impl StatusExt for Status {
     fn to_result_with<T, ErrData: Debug>(
         self,
         val: impl FnOnce() -> T,
-        err: impl FnOnce(Status) -> ErrData,
+        err: impl FnOnce(Self) -> ErrData,
     ) -> Result<T, ErrData> {
         if self.is_success() {
             Ok(val())

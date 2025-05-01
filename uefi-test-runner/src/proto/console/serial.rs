@@ -1,6 +1,8 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+use crate::reconnect_serial_to_console;
 use uefi::proto::console::serial::{ControlBits, Serial};
-use uefi::table::boot::BootServices;
-use uefi::{Result, ResultExt, Status};
+use uefi::{boot, Result, ResultExt, Status};
 
 // For the duration of this function, the serial device is opened in
 // exclusive mode. That means logs will not work, which means we should
@@ -40,7 +42,7 @@ fn serial_test_helper(serial: &mut Serial) -> Result {
     }
 }
 
-pub unsafe fn test(bt: &BootServices) {
+pub unsafe fn test() {
     // The serial device under aarch64 doesn't support the software
     // loopback feature needed for this test.
     if cfg!(target_arch = "aarch64") {
@@ -48,13 +50,10 @@ pub unsafe fn test(bt: &BootServices) {
     }
 
     info!("Running serial protocol test");
-    let handle = bt
-        .get_handle_for_protocol::<Serial>()
-        .expect("missing Serial protocol");
+    let handle = boot::get_handle_for_protocol::<Serial>().expect("missing Serial protocol");
 
-    let mut serial = bt
-        .open_protocol_exclusive::<Serial>(handle)
-        .expect("failed to open serial protocol");
+    let mut serial =
+        boot::open_protocol_exclusive::<Serial>(handle).expect("failed to open serial protocol");
 
     // Send the request, but don't check the result yet so that first
     // we can reconnect the console output for the logger.
@@ -66,7 +65,7 @@ pub unsafe fn test(bt: &BootServices) {
     // device, which was broken when we opened the protocol in exclusive
     // mode above.
     drop(serial);
-    let _ = bt.connect_controller(handle, None, None, true);
+    reconnect_serial_to_console(handle);
 
     if let Err(err) = res {
         panic!("serial test failed: {:?}", err.status());

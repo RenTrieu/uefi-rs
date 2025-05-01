@@ -1,7 +1,8 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use alloc::vec::Vec;
-use core::mem::MaybeUninit;
+use uefi::boot;
 use uefi::proto::tcg::{v1, v2, AlgorithmId, EventType, HashAlgorithm, PcrIndex};
-use uefi::table::boot::BootServices;
 
 // Environmental note:
 //
@@ -45,7 +46,7 @@ fn tcg_v1_read_pcr(tcg: &mut v1::Tcg, pcr_index: PcrIndex) -> v1::Sha1Digest {
     output[10..].try_into().unwrap()
 }
 
-fn test_tcg_v1(bt: &BootServices) {
+fn test_tcg_v1() {
     // Skip the test of the `tpm_v1` feature is not enabled.
     if cfg!(not(feature = "tpm_v1")) {
         return;
@@ -53,17 +54,14 @@ fn test_tcg_v1(bt: &BootServices) {
 
     info!("Running TCG v1 test");
 
-    let handle = bt
-        .get_handle_for_protocol::<v1::Tcg>()
-        .expect("no TCG handle found");
+    let handle = boot::get_handle_for_protocol::<v1::Tcg>().expect("no TCG handle found");
 
-    let mut tcg = bt
-        .open_protocol_exclusive::<v1::Tcg>(handle)
-        .expect("failed to open TCG protocol");
+    let mut tcg =
+        boot::open_protocol_exclusive::<v1::Tcg>(handle).expect("failed to open TCG protocol");
 
     let pcr_index = PcrIndex(8);
 
-    let mut event_buf = [MaybeUninit::uninit(); 256];
+    let mut event_buf = [0; 256];
     let event = v1::PcrEvent::new_in_buffer(
         &mut event_buf,
         pcr_index,
@@ -214,7 +212,7 @@ fn tcg_v2_read_pcr_8(tcg: &mut v2::Tcg) -> v1::Sha1Digest {
     output[30..].try_into().unwrap()
 }
 
-pub fn test_tcg_v2(bt: &BootServices) {
+pub fn test_tcg_v2() {
     // Skip the test of the `tpm_v2` feature is not enabled.
     if cfg!(not(feature = "tpm_v2")) {
         return;
@@ -222,13 +220,10 @@ pub fn test_tcg_v2(bt: &BootServices) {
 
     info!("Running TCG v2 test");
 
-    let handle = bt
-        .get_handle_for_protocol::<v2::Tcg>()
-        .expect("no TCG handle found");
+    let handle = boot::get_handle_for_protocol::<v2::Tcg>().expect("no TCG handle found");
 
-    let mut tcg = bt
-        .open_protocol_exclusive::<v2::Tcg>(handle)
-        .expect("failed to open TCG protocol");
+    let mut tcg =
+        boot::open_protocol_exclusive::<v2::Tcg>(handle).expect("failed to open TCG protocol");
 
     let expected_banks =
         HashAlgorithm::SHA1 | HashAlgorithm::SHA256 | HashAlgorithm::SHA384 | HashAlgorithm::SHA512;
@@ -279,7 +274,7 @@ pub fn test_tcg_v2(bt: &BootServices) {
 
     // Create a PCR event.
     let pcr_index = PcrIndex(8);
-    let mut event_buf = [MaybeUninit::uninit(); 256];
+    let mut event_buf = [0; 256];
     let event_data = [0x12, 0x13, 0x14, 0x15];
     let data_to_hash = b"some-data";
     let event =
@@ -361,7 +356,7 @@ pub fn test_tcg_v2(bt: &BootServices) {
     );
 }
 
-pub fn test(bt: &BootServices) {
-    test_tcg_v1(bt);
-    test_tcg_v2(bt);
+pub fn test() {
+    test_tcg_v1();
+    test_tcg_v2();
 }

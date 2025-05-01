@@ -1,9 +1,10 @@
-use uefi::prelude::BootServices;
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use uefi::proto::network::pxe::{BaseCode, DhcpV4Packet, IpFilter, IpFilters, UdpOpFlags};
 use uefi::proto::network::IpAddress;
-use uefi::CStr8;
+use uefi::{boot, CStr8};
 
-pub fn test(bt: &BootServices) {
+pub fn test() {
     // Skip the test if the `pxe` feature is not enabled.
     if cfg!(not(feature = "pxe")) {
         return;
@@ -11,11 +12,9 @@ pub fn test(bt: &BootServices) {
 
     info!("Testing The PXE base code protocol");
 
-    let handles = bt
-        .find_handles::<BaseCode>()
-        .expect("failed to get PXE base code handles");
+    let handles = boot::find_handles::<BaseCode>().expect("failed to get PXE base code handles");
     for handle in handles {
-        let mut base_code = bt.open_protocol_exclusive::<BaseCode>(handle).unwrap();
+        let mut base_code = boot::open_protocol_exclusive::<BaseCode>(handle).unwrap();
 
         info!("Starting PXE Base Code");
         base_code
@@ -25,8 +24,8 @@ pub fn test(bt: &BootServices) {
             .dhcp(false)
             .expect("failed to complete a dhcpv4 handshake");
 
-        assert!(base_code.mode().dhcp_ack_received);
-        let dhcp_ack: &DhcpV4Packet = base_code.mode().dhcp_ack.as_ref();
+        assert!(base_code.mode().dhcp_ack_received());
+        let dhcp_ack: &DhcpV4Packet = base_code.mode().dhcp_ack().as_ref();
         let server_ip = dhcp_ack.bootp_si_addr;
         let server_ip = IpAddress::new_v4(server_ip);
 
@@ -76,7 +75,7 @@ pub fn test(bt: &BootServices) {
 
         let mut src_ip = server_ip;
         let mut src_port = EXAMPLE_SERVICE_PORT;
-        let mut dest_ip = base_code.mode().station_ip;
+        let mut dest_ip = base_code.mode().station_ip();
         let mut dest_port = write_src_port;
         let mut header = [0; 1];
         let mut received = [0; 4];

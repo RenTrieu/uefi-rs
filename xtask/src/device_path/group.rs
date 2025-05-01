@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use super::node::{is_node_attr, Node};
 use heck::ToUpperCamelCase;
 use proc_macro2::{Span, TokenStream};
@@ -70,6 +72,32 @@ impl NodeGroup {
         }
 
         group
+    }
+
+    pub fn gen_raw_module(&self) -> TokenStream {
+        let module_ident = &self.device_type.module_ident();
+        let nodes = self.nodes.iter().map(Node::gen_raw_struct);
+        let friends = &self.friends;
+        let doc = format!(
+            " Device path nodes for [`DeviceType::{}`].",
+            self.device_type.const_ident()
+        );
+
+        // Filter out non-node items except for structs and macro invocations
+        // (i.e. `bitflags`).
+        let friends = friends
+            .iter()
+            .filter(|f| matches!(f, Item::Struct(_) | Item::Macro(_)));
+
+        quote!(
+            #[doc = #doc]
+            pub mod #module_ident {
+                use super::*;
+
+                #(#nodes)*
+                #(#friends)*
+            }
+        )
     }
 
     pub fn gen_packed_module(&self) -> TokenStream {
@@ -156,7 +184,7 @@ impl NodeGroup {
                 #(#variants),*
             }
 
-            impl<'a> TryFrom<&DevicePathNode> for DevicePathNodeEnum<'a> {
+            impl TryFrom<&DevicePathNode> for DevicePathNodeEnum<'_> {
                 type Error = NodeConversionError;
 
                 fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {

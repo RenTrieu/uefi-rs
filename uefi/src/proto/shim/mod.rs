@@ -1,7 +1,9 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Shim lock protocol.
 
 #![cfg(any(
-    target_arch = "i386",
+    target_arch = "x86",
     target_arch = "x86_64",
     target_arch = "arm",
     target_arch = "aarch64"
@@ -45,7 +47,12 @@ pub struct Hashes {
 
 // These macros set the correct calling convention for the Shim protocol methods.
 
-#[cfg(any(target_arch = "i386", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86")]
+macro_rules! shim_function {
+    (fn $args:tt -> $return_type:ty) => (extern "cdecl" fn $args -> $return_type)
+}
+
+#[cfg(target_arch = "x86_64")]
 macro_rules! shim_function {
     (fn $args:tt -> $return_type:ty) => (extern "sysv64" fn $args -> $return_type)
 }
@@ -65,6 +72,7 @@ macro_rules! shim_function {
 /// application may itself be a bootloader that needs to validate
 /// another EFI application before running it, and the shim lock
 /// protocol exists to support that.
+#[derive(Debug)]
 #[repr(C)]
 #[unsafe_protocol("605dab50-e046-4300-abb6-3dd810dd8b23")]
 pub struct ShimLock {

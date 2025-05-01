@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Partition information protocol.
 
 use crate::proto::unsafe_protocol;
@@ -157,7 +159,7 @@ impl GptPartitionAttributes {
 /// GPT/EFI Partition Entry.
 #[repr(C)]
 #[repr(packed)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GptPartitionEntry {
     /// GUID that defines the type of this Partition. A value of zero
     /// indicates that this partition entry is unused.
@@ -220,6 +222,7 @@ newtype_enum! {
 }
 
 /// Protocol for accessing partition information.
+#[allow(missing_debug_implementations)]
 #[repr(C)]
 #[repr(packed)]
 #[unsafe_protocol("8cf2f62c-bc9b-4821-808d-ec9ec421a1a0")]

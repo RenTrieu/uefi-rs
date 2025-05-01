@@ -1,7 +1,9 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use crate::proto::unsafe_protocol;
-use crate::{CStr16, Char16, Result, ResultExt, Status, StatusExt};
+use crate::{CStr16, Result, ResultExt, Status, StatusExt};
 use core::fmt;
-use core::fmt::{Debug, Formatter};
+use uefi_raw::protocol::console::{SimpleTextOutputMode, SimpleTextOutputProtocol};
 
 /// Interface for text-based output devices.
 ///
@@ -11,39 +13,24 @@ use core::fmt::{Debug, Formatter};
 /// # Accessing `Output` protocol
 ///
 /// The standard output and standard error output protocols can be accessed
-/// using [`SystemTable::stdout`] and [`SystemTable::stderr`], respectively.
+/// using [`system::stdout`] and [`system::stderr`], respectively.
 ///
 /// An `Output` protocol can also be accessed like any other UEFI protocol.
-/// See the [`BootServices`] documentation for more details of how to open a
+/// See the [`boot`] documentation for more details of how to open a
 /// protocol.
 ///
-/// [`SystemTable::stdout`]: crate::table::SystemTable::stdout
-/// [`SystemTable::stderr`]: crate::table::SystemTable::stderr
-/// [`BootServices`]: crate::table::boot::BootServices#accessing-protocols
-#[repr(C)]
-#[unsafe_protocol("387477c2-69c7-11d2-8e39-00a0c969723b")]
-pub struct Output {
-    reset: extern "efiapi" fn(this: &Output, extended: bool) -> Status,
-    output_string: unsafe extern "efiapi" fn(this: &Output, string: *const Char16) -> Status,
-    test_string: unsafe extern "efiapi" fn(this: &Output, string: *const Char16) -> Status,
-    query_mode: extern "efiapi" fn(
-        this: &Output,
-        mode: usize,
-        columns: &mut usize,
-        rows: &mut usize,
-    ) -> Status,
-    set_mode: extern "efiapi" fn(this: &mut Output, mode: usize) -> Status,
-    set_attribute: extern "efiapi" fn(this: &mut Output, attribute: usize) -> Status,
-    clear_screen: extern "efiapi" fn(this: &mut Output) -> Status,
-    set_cursor_position: extern "efiapi" fn(this: &mut Output, column: usize, row: usize) -> Status,
-    enable_cursor: extern "efiapi" fn(this: &mut Output, visible: bool) -> Status,
-    data: *const OutputData,
-}
+/// [`system::stdout`]: crate::system::with_stdout
+/// [`system::stderr`]: crate::system::with_stderr
+/// [`boot`]: crate::boot#accessing-protocols
+#[derive(Debug)]
+#[repr(transparent)]
+#[unsafe_protocol(SimpleTextOutputProtocol::GUID)]
+pub struct Output(SimpleTextOutputProtocol);
 
 impl Output {
     /// Resets and clears the text output device hardware.
     pub fn reset(&mut self, extended: bool) -> Result {
-        (self.reset)(self, extended).to_result()
+        unsafe { (self.0.reset)(&mut self.0, extended.into()) }.to_result()
     }
 
     /// Clears the output screen.
@@ -51,12 +38,12 @@ impl Output {
     /// The background is set to the current background color.
     /// The cursor is moved to (0, 0).
     pub fn clear(&mut self) -> Result {
-        (self.clear_screen)(self).to_result()
+        unsafe { (self.0.clear_screen)(&mut self.0) }.to_result()
     }
 
     /// Writes a string to the output device.
     pub fn output_string(&mut self, string: &CStr16) -> Result {
-        unsafe { (self.output_string)(self, string.as_ptr()) }.to_result()
+        unsafe { (self.0.output_string)(&mut self.0, string.as_ptr().cast()) }.to_result()
     }
 
     /// Writes a string to the output device. If the string contains
@@ -77,7 +64,7 @@ impl Output {
     /// UEFI applications are encouraged to try to print a string even if it contains
     /// some unsupported characters.
     pub fn test_string(&mut self, string: &CStr16) -> Result<bool> {
-        match unsafe { (self.test_string)(self, string.as_ptr()) } {
+        match unsafe { (self.0.test_string)(&mut self.0, string.as_ptr().cast()) } {
             Status::UNSUPPORTED => Ok(false),
             other => other.to_result_with_val(|| true),
         }
@@ -106,7 +93,8 @@ impl Output {
     /// alternative to this method.
     fn query_mode(&self, index: usize) -> Result<(usize, usize)> {
         let (mut columns, mut rows) = (0, 0);
-        (self.query_mode)(self, index, &mut columns, &mut rows)
+        let this: *const _ = &self.0;
+        unsafe { (self.0.query_mode)(this.cast_mut(), index, &mut columns, &mut rows) }
             .to_result_with_val(|| (columns, rows))
     }
 
@@ -125,13 +113,13 @@ impl Output {
 
     /// Sets a mode as current.
     pub fn set_mode(&mut self, mode: OutputMode) -> Result {
-        (self.set_mode)(self, mode.index).to_result()
+        unsafe { (self.0.set_mode)(&mut self.0, mode.index) }.to_result()
     }
 
     /// Returns whether the cursor is currently shown or not.
     #[must_use]
-    pub const fn cursor_visible(&self) -> bool {
-        self.data().cursor_visible
+    pub fn cursor_visible(&self) -> bool {
+        self.data().cursor_visible.into()
     }
 
     /// Make the cursor visible or invisible.
@@ -139,7 +127,7 @@ impl Output {
     /// The output device may not support this operation, in which case an
     /// `Unsupported` error will be returned.
     pub fn enable_cursor(&mut self, visible: bool) -> Result {
-        (self.enable_cursor)(self, visible).to_result()
+        unsafe { (self.0.enable_cursor)(&mut self.0, visible.into()) }.to_result()
     }
 
     /// Returns the column and row of the cursor.
@@ -154,7 +142,7 @@ impl Output {
     ///
     /// This function will fail if the cursor's new position would exceed the screen's bounds.
     pub fn set_cursor_position(&mut self, column: usize, row: usize) -> Result {
-        (self.set_cursor_position)(self, column, row).to_result()
+        unsafe { (self.0.set_cursor_position)(&mut self.0, column, row) }.to_result()
     }
 
     /// Sets the text and background colors for the console.
@@ -168,13 +156,15 @@ impl Output {
         assert!(bgc < 8, "An invalid background color was requested");
 
         let attr = ((bgc & 0x7) << 4) | (fgc & 0xF);
-        (self.set_attribute)(self, attr).to_result()
+        unsafe { (self.0.set_attribute)(&mut self.0, attr) }.to_result()
     }
 
     /// Get a reference to `OutputData`. The lifetime of the reference is tied
     /// to `self`.
-    const fn data(&self) -> &OutputData {
-        unsafe { &*self.data }
+    const fn data(&self) -> &SimpleTextOutputMode {
+        // Can't dereference mut pointers in a const function, so cast to const.
+        let mode = self.0.mode.cast_const();
+        unsafe { &*mode }
     }
 }
 
@@ -229,35 +219,6 @@ impl fmt::Write for Output {
     }
 }
 
-impl Debug for Output {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Output")
-            .field("reset (fn ptr)", &(self.reset as *const u64))
-            .field(
-                "output_string (fn ptr)",
-                &(self.output_string as *const u64),
-            )
-            .field("test_string (fn ptr)", &(self.test_string as *const u64))
-            .field("query_mode (fn ptr)", &(self.query_mode as *const u64))
-            .field("set_mode (fn ptr)", &(self.set_mode as *const u64))
-            .field(
-                "set_attribute (fn ptr)",
-                &(self.set_attribute as *const u64),
-            )
-            .field("clear_screen (fn ptr)", &(self.clear_screen as *const u64))
-            .field(
-                "set_cursor_position (fn ptr)",
-                &(self.set_cursor_position as *const u64),
-            )
-            .field(
-                "enable_cursor (fn ptr)",
-                &(self.enable_cursor as *const u64),
-            )
-            .field("data", &self.data)
-            .finish()
-    }
-}
-
 /// The text mode (resolution) of the output device.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OutputMode {
@@ -296,7 +257,7 @@ pub struct OutputModeIter<'out> {
     max: usize,
 }
 
-impl<'out> Iterator for OutputModeIter<'out> {
+impl Iterator for OutputModeIter<'_> {
     type Item = OutputMode;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -313,25 +274,6 @@ impl<'out> Iterator for OutputModeIter<'out> {
             None
         }
     }
-}
-
-/// Additional data of the output device.
-#[derive(Debug)]
-#[repr(C)]
-struct OutputData {
-    /// The number of modes supported by the device.
-    max_mode: i32,
-    /// The current output mode.
-    /// Negative index -1 is used to notify that no valid mode is configured
-    mode: i32,
-    /// The current character output attribute.
-    attribute: i32,
-    /// The cursor’s column.
-    cursor_column: i32,
-    /// The cursor’s row.
-    cursor_row: i32,
-    /// Whether the cursor is currently visible or not.
-    cursor_visible: bool,
 }
 
 /// Colors for the UEFI console.

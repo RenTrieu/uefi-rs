@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use crate::device_path::util::is_doc_attr;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens, TokenStreamExt};
@@ -14,6 +16,7 @@ use syn::{Attribute, Expr, ExprLit, Field, Ident, Lit, Path, Type, TypeArray};
 ///
 /// To add a new base type, verify that it meets the above requirement,
 /// then add it to the list in `BaseType::new` along with its size.
+#[derive(Clone)]
 pub struct BaseType {
     path: Path,
     size_in_bytes: usize,
@@ -39,25 +42,25 @@ impl BaseType {
                 "IpAddress" => 16,
                 "MemoryType" => 4,
 
-                "crate::proto::device_path::hardware::BmcInterfaceType" => 1,
+                "device_path::hardware::BmcInterfaceType" => 1,
 
-                "crate::proto::device_path::messaging::BluetoothLeAddressType" => 1,
-                "crate::proto::device_path::messaging::DnsAddressType" => 1,
-                "crate::proto::device_path::messaging::InfinibandResourceFlags" => 4,
-                "crate::proto::device_path::messaging::Ipv4AddressOrigin" => 1,
-                "crate::proto::device_path::messaging::Ipv6AddressOrigin" => 1,
-                "crate::proto::device_path::messaging::IscsiLoginOptions" => 2,
-                "crate::proto::device_path::messaging::IscsiProtocol" => 2,
-                "crate::proto::device_path::messaging::MasterSlave" => 1,
-                "crate::proto::device_path::messaging::Parity" => 1,
-                "crate::proto::device_path::messaging::PrimarySecondary" => 1,
-                "crate::proto::device_path::messaging::RestServiceAccessMode" => 1,
-                "crate::proto::device_path::messaging::RestServiceType" => 1,
-                "crate::proto::device_path::messaging::StopBits" => 1,
+                "device_path::messaging::BluetoothLeAddressType" => 1,
+                "device_path::messaging::DnsAddressType" => 1,
+                "device_path::messaging::InfinibandResourceFlags" => 4,
+                "device_path::messaging::Ipv4AddressOrigin" => 1,
+                "device_path::messaging::Ipv6AddressOrigin" => 1,
+                "device_path::messaging::IscsiLoginOptions" => 2,
+                "device_path::messaging::IscsiProtocol" => 2,
+                "device_path::messaging::MasterSlave" => 1,
+                "device_path::messaging::Parity" => 1,
+                "device_path::messaging::PrimarySecondary" => 1,
+                "device_path::messaging::RestServiceAccessMode" => 1,
+                "device_path::messaging::RestServiceType" => 1,
+                "device_path::messaging::StopBits" => 1,
 
-                "crate::proto::device_path::media::PartitionFormat" => 1,
-                "crate::proto::device_path::media::RamDiskType" => 16,
-                "crate::proto::device_path::media::SignatureType" => 1,
+                "device_path::media::PartitionFormat" => 1,
+                "device_path::media::RamDiskType" => 16,
+                "device_path::media::SignatureType" => 1,
 
                 _ => panic!("unsupported base type: {path_str}"),
             };
@@ -86,6 +89,7 @@ impl ToTokens for BaseType {
 }
 
 /// Storage type for a field in the packed struct.
+#[derive(Clone)]
 pub enum PackedType {
     /// A fixed-size non-array type.
     Base(BaseType),
@@ -198,6 +202,18 @@ impl NodeField {
         }
     }
 
+    /// Get the field type for a uefi-raw node.
+    ///
+    /// This is mostly the same as `packed_ty`, except that DST slices are
+    /// converted to zero-length arrays.
+    pub fn raw_ty(&self) -> PackedType {
+        if let PackedType::Slice(ty) = &self.packed_ty {
+            PackedType::Array(ty.clone(), 0)
+        } else {
+            self.packed_ty.clone()
+        }
+    }
+
     /// Whether the field is internal-only, e.g. a reserved field. No
     /// accessor will be generated for the field and the builder will
     /// initialize it with zeros.
@@ -250,7 +266,7 @@ impl NodeField {
                 ret_type = quote!(UnalignedSlice<#slice_elem>);
                 ret_val = quote!(
                     let ptr: *const [#slice_elem] = addr_of!(self.#field_name);
-                    let (ptr, len): (*const (), usize) = PtrExt::to_raw_parts(ptr);
+                    let (ptr, len): (*const (), usize) = ptr_meta::to_raw_parts(ptr);
                     unsafe {
                         UnalignedSlice::new(ptr.cast::<#slice_elem>(), len)
                     }

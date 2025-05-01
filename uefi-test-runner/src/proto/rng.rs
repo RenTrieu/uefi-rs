@@ -1,14 +1,15 @@
-use uefi::proto::rng::{Rng, RngAlgorithmType};
-use uefi::table::boot::BootServices;
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
-pub fn test(bt: &BootServices) {
+use uefi::boot;
+use uefi::proto::rng::{Rng, RngAlgorithmType};
+
+pub fn test() {
     info!("Running rng protocol test");
 
-    let handle = bt.get_handle_for_protocol::<Rng>().expect("No Rng handles");
+    let handle = boot::get_handle_for_protocol::<Rng>().expect("No Rng handles");
 
-    let mut rng = bt
-        .open_protocol_exclusive::<Rng>(handle)
-        .expect("Failed to open Rng protocol");
+    let mut rng =
+        boot::open_protocol_exclusive::<Rng>(handle).expect("Failed to open Rng protocol");
 
     let mut list = [RngAlgorithmType::EMPTY_ALGORITHM; 4];
 

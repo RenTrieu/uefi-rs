@@ -1,131 +1,171 @@
-//! This module implements Rust's global allocator interface using UEFI's memory allocation functions.
-//!
-//! If the `global_allocator` feature is enabled, the [`Allocator`] will be used
-//! as the global Rust allocator.
-//!
-//! # Usage
-//!
-//! Call the `init` function with a reference to the boot services table.
-//! Failure to do so before calling a memory allocating function will panic.
-//!
-//! Call the `exit_boot_services` function before exiting UEFI boot services.
-//! Failure to do so will turn subsequent allocation into undefined behaviour.
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
+//! This module exports [`Allocator`].
+//!
+//! The allocator can be used as global Rust allocator using the
+//! `global_allocator` crate feature. See [`helpers`] for more info.
+//!
+//! [`helpers`]: uefi::helpers
+
+use crate::boot::{self, AllocateType};
+use crate::mem::memory_map::MemoryType;
+use crate::proto::loaded_image::LoadedImage;
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr::{self, NonNull};
+use core::sync::atomic::{AtomicU32, Ordering};
+use uefi_raw::table::boot::PAGE_SIZE;
 
-use crate::proto::loaded_image::LoadedImage;
-use crate::table::boot::{BootServices, MemoryType};
-
-/// Reference to the boot services table, used to call the pool memory allocation functions.
+/// Get the memory type to use for allocation.
 ///
-/// The inner pointer is only safe to dereference if UEFI boot services have not been
-/// exited by the host application yet.
-static mut BOOT_SERVICES: Option<NonNull<BootServices>> = None;
+/// The first time this is called, the data type of the loaded image will be
+/// retrieved. That value is cached in a static and reused on subsequent
+/// calls. If the memory type of the loaded image cannot be retrieved for some
+/// reason, a default of `LOADER_DATA` is used.
+fn get_memory_type() -> MemoryType {
+    // Initialize to a `RESERVED` to indicate the actual value hasn't been set yet.
+    static MEMORY_TYPE: AtomicU32 = AtomicU32::new(MemoryType::RESERVED.0);
 
-/// The memory type used for pool memory allocations.
-/// TODO: Use OnceCell when stablilized.
-static mut MEMORY_TYPE: MemoryType = MemoryType::LOADER_DATA;
-
-/// Initializes the allocator.
-///
-/// # Safety
-///
-/// This function is unsafe because you _must_ make sure that exit_boot_services
-/// will be called when UEFI boot services will be exited.
-pub unsafe fn init(boot_services: &BootServices) {
-    BOOT_SERVICES = NonNull::new(boot_services as *const _ as *mut _);
-
-    if let Ok(loaded_image) =
-        boot_services.open_protocol_exclusive::<LoadedImage>(boot_services.image_handle())
-    {
-        MEMORY_TYPE = loaded_image.data_type()
+    let memory_type = MEMORY_TYPE.load(Ordering::Acquire);
+    if memory_type == MemoryType::RESERVED.0 {
+        let memory_type = if let Ok(loaded_image) =
+            boot::open_protocol_exclusive::<LoadedImage>(boot::image_handle())
+        {
+            loaded_image.data_type()
+        } else {
+            MemoryType::LOADER_DATA
+        };
+        MEMORY_TYPE.store(memory_type.0, Ordering::Release);
+        memory_type
+    } else {
+        MemoryType(memory_type)
     }
 }
 
-/// Access the boot services
-fn boot_services() -> NonNull<BootServices> {
-    unsafe { BOOT_SERVICES.expect("Boot services are unavailable or have been exited") }
-}
+/// Helper to get a custom alignment out of an allocation with an alignment of
+/// eight (UEFI default alignment). This works by allocating extra space and
+/// storing a pointer to the actual allocation right above the allocation
+/// handed out via the public API.
+fn alloc_pool_aligned(memory_type: MemoryType, size: usize, align: usize) -> *mut u8 {
+    let full_alloc_ptr = boot::allocate_pool(memory_type, size + align);
+    let full_alloc_ptr = if let Ok(ptr) = full_alloc_ptr {
+        ptr.as_ptr()
+    } else {
+        return ptr::null_mut();
+    };
 
-/// Notify the allocator library that boot services are not safe to call anymore
-///
-/// You must arrange for this function to be called on exit from UEFI boot services
-pub fn exit_boot_services() {
+    // Calculate the offset needed to get an aligned pointer within the
+    // full allocation. If that offset is zero, increase it to `align`
+    // so that we still have space to store the extra pointer described
+    // below.
+    let mut offset = full_alloc_ptr.align_offset(align);
+    if offset == 0 {
+        offset = align;
+    }
+
+    // Before returning the aligned allocation, store a pointer to the
+    // full unaligned allocation in the bytes just before the aligned
+    // allocation. We know we have at least eight bytes there due to
+    // adding `align` to the memory allocation size. We also know the
+    // write is appropriately aligned for a `*mut u8` pointer because
+    // `align_ptr` is aligned, and alignments are always powers of two
+    // (as enforced by the `Layout` type).
     unsafe {
-        BOOT_SERVICES = None;
+        let aligned_ptr = full_alloc_ptr.add(offset);
+        (aligned_ptr.cast::<*mut u8>()).sub(1).write(full_alloc_ptr);
+        aligned_ptr
     }
 }
 
-/// Allocator which uses the UEFI pool allocation functions.
+/// Returns whether the allocation is a multiple of a [`PAGE_SIZE`] and is
+/// aligned to [`PAGE_SIZE`].
 ///
-/// Only valid for as long as the UEFI boot services are available.
+/// This does not only check the alignment but also the size. For types
+/// allocated by Rust itself (e.g., `Box<T>`), the size is always at least the
+/// alignment, as specified in the [Rust type layout]. However, to be also safe
+/// when it comes to manual invocations, we additionally check if the size is
+/// a multiple of [`PAGE_SIZE`].
+///
+/// [Rust type layout]: https://doc.rust-lang.org/reference/type-layout.html
+const fn layout_allows_page_alloc_shortcut(layout: &Layout) -> bool {
+    layout.size() % PAGE_SIZE == 0 && layout.align() == PAGE_SIZE
+}
+
+/// Allocator using UEFI boot services.
+///
+/// This type implements [`GlobalAlloc`] and can be marked with the
+/// `#[global_allocator]` attribute to be used as global Rust allocator.
+///
+/// Note that if boot services are not active (anymore), [`Allocator::alloc`]
+/// will return a null pointer and [`Allocator::dealloc`] will panic.
 #[derive(Debug)]
 pub struct Allocator;
 
 unsafe impl GlobalAlloc for Allocator {
-    /// Allocate memory using [`BootServices::allocate_pool`]. The allocation is
-    /// of type [`MemoryType::LOADER_DATA`] for UEFI applications, [`MemoryType::BOOT_SERVICES_DATA`]
-    /// for UEFI boot drivers and [`MemoryType::RUNTIME_SERVICES_DATA`] for UEFI runtime drivers.
+    /// Allocate memory using the UEFI boot services.
+    ///
+    /// The allocation's [memory type] matches the current image's [data type].
+    ///
+    /// [memory type]: MemoryType
+    /// [data type]: LoadedImage::data_type
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let size = layout.size();
-        let align = layout.align();
+        if !boot::are_boot_services_active() {
+            return ptr::null_mut();
+        }
 
-        if align > 8 {
-            // The requested alignment is greater than 8, but `allocate_pool` is
-            // only guaranteed to provide eight-byte alignment. Allocate extra
-            // space so that we can return an appropriately-aligned pointer
-            // within the allocation.
-            let full_alloc_ptr = if let Ok(ptr) = boot_services()
-                .as_ref()
-                .allocate_pool(MEMORY_TYPE, size + align)
-            {
-                ptr
-            } else {
-                return ptr::null_mut();
-            };
+        let memory_type = get_memory_type();
+        let use_page_shortcut = layout_allows_page_alloc_shortcut(&layout);
 
-            // Calculate the offset needed to get an aligned pointer within the
-            // full allocation. If that offset is zero, increase it to `align`
-            // so that we still have space to store the extra pointer described
-            // below.
-            let mut offset = full_alloc_ptr.align_offset(align);
-            if offset == 0 {
-                offset = align;
+        match (use_page_shortcut, layout.align()) {
+            // Allocating pages is actually very expected in UEFI OS loaders, so
+            // it makes sense to provide this optimization.
+            (true, _) => {
+                // To spammy, but useful for manual testing.
+                // log::trace!("Taking PAGE_SIZE shortcut for layout={layout:?}");
+                let count = layout.size().div_ceil(PAGE_SIZE);
+                boot::allocate_pages(AllocateType::AnyPages, memory_type, count)
+                    .map(|ptr| ptr.as_ptr())
+                    .unwrap_or(ptr::null_mut())
             }
-
-            // Before returning the aligned allocation, store a pointer to the
-            // full unaligned allocation in the bytes just before the aligned
-            // allocation. We know we have at least eight bytes there due to
-            // adding `align` to the memory allocation size. We also know the
-            // write is appropriately aligned for a `*mut u8` pointer because
-            // `align_ptr` is aligned, and alignments are always powers of two
-            // (as enforced by the `Layout` type).
-            let aligned_ptr = full_alloc_ptr.add(offset);
-            (aligned_ptr.cast::<*mut u8>()).sub(1).write(full_alloc_ptr);
-            aligned_ptr
-        } else {
-            // The requested alignment is less than or equal to eight, and
-            // `allocate_pool` always provides eight-byte alignment, so we can
-            // use `allocate_pool` directly.
-            boot_services()
-                .as_ref()
-                .allocate_pool(MEMORY_TYPE, size)
-                .unwrap_or(ptr::null_mut())
+            (false, 0..=8 /* UEFI default alignment */) => {
+                // The requested alignment is less than or equal to eight, and
+                // `allocate_pool` always provides eight-byte alignment, so we can
+                // use `allocate_pool` directly.
+                boot::allocate_pool(memory_type, layout.size())
+                    .map(|ptr| ptr.as_ptr())
+                    .unwrap_or(ptr::null_mut())
+            }
+            (false, 9..) => alloc_pool_aligned(memory_type, layout.size(), layout.align()),
         }
     }
 
-    /// Deallocate memory using [`BootServices::free_pool`].
-    unsafe fn dealloc(&self, mut ptr: *mut u8, layout: Layout) {
-        if layout.align() > 8 {
-            // Retrieve the pointer to the full allocation that was packed right
-            // before the aligned allocation in `alloc`.
-            ptr = (ptr as *const *mut u8).sub(1).read();
+    /// Deallocate memory using the UEFI boot services.
+    ///
+    /// This will panic after exiting boot services.
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        let ptr = NonNull::new(ptr).unwrap();
+
+        let use_page_shortcut = layout_allows_page_alloc_shortcut(&layout);
+
+        match (use_page_shortcut, layout.align()) {
+            (true, _) => {
+                // To spammy, but useful for manual testing.
+                // log::trace!("Taking PAGE_SIZE shortcut for layout={layout:?}");
+                let count = layout.size().div_ceil(PAGE_SIZE);
+                unsafe { boot::free_pages(ptr, count).unwrap() }
+            }
+            (false, 0..=8 /* UEFI default alignment */) => {
+                // Warning: this will panic after exiting boot services.
+                unsafe { boot::free_pool(ptr) }.unwrap();
+            }
+            (false, 9..) => {
+                let ptr = ptr.as_ptr().cast::<*mut u8>();
+                // Retrieve the pointer to the full allocation that was packed right
+                // before the aligned allocation in `alloc`.
+                let actual_alloc_ptr = unsafe { ptr.sub(1).read() };
+                let ptr = NonNull::new(actual_alloc_ptr).unwrap();
+                // Warning: this will panic after exiting boot services.
+                unsafe { boot::free_pool(ptr) }.unwrap();
+            }
         }
-        boot_services().as_ref().free_pool(ptr).unwrap();
     }
 }
-
-#[cfg(feature = "global_allocator")]
-#[global_allocator]
-static ALLOCATOR: Allocator = Allocator;

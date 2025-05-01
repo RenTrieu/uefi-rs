@@ -1,14 +1,17 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // This module defines the `ComponentName1` type and marks it deprecated. That
 // causes warnings for uses within this module (e.g. the `impl ComponentName1`
 // block), so turn off deprecated warnings. It's not yet possible to make this
 // allow more fine-grained, see https://github.com/rust-lang/rust/issues/62398.
 #![allow(deprecated)]
 
+use crate::boot::{self, ScopedProtocol};
 use crate::proto::unsafe_protocol;
-use crate::table::boot::{BootServices, ScopedProtocol};
 use crate::{CStr16, Error, Handle, Result, Status, StatusExt};
-use core::fmt::{Debug, Formatter};
+use core::fmt::{self, Debug, Display, Formatter};
 use core::{ptr, slice};
+use uefi_raw::protocol::driver::ComponentName2Protocol;
 
 /// Protocol that provides human-readable names for a driver and for each of the
 /// controllers that the driver is managing.
@@ -25,23 +28,14 @@ use core::{ptr, slice};
 /// [ISO 639-2]: https://en.wikipedia.org/wiki/List_of_ISO_639-2_codes
 /// [RFC 4646]: https://www.rfc-editor.org/rfc/rfc4646
 #[deprecated = "deprecated in UEFI 2.1; use ComponentName2 where possible"]
-#[unsafe_protocol("107a772c-d5e1-11d4-9a46-0090273fc14d")]
-#[repr(C)]
-pub struct ComponentName1 {
-    get_driver_name: unsafe extern "efiapi" fn(
-        this: *const Self,
-        language: *const u8,
-        driver_name: *mut *const u16,
-    ) -> Status,
-    get_controller_name: unsafe extern "efiapi" fn(
-        this: *const Self,
-        controller_handle: Handle,
-        child_handle: Option<Handle>,
-        language: *const u8,
-        controller_name: *mut *const u16,
-    ) -> Status,
-    supported_languages: *const u8,
-}
+#[unsafe_protocol(ComponentName2Protocol::DEPRECATED_COMPONENT_NAME_GUID)]
+#[derive(Debug)]
+#[repr(transparent)]
+pub struct ComponentName1(
+    // The layout of the protocol is the same as ComponentName2, only the format
+    // of the language string changed.
+    ComponentName2Protocol,
+);
 
 impl ComponentName1 {
     /// Get an iterator over supported languages. Each language is identified by
@@ -49,8 +43,8 @@ impl ComponentName1 {
     /// English is encoded as "eng".
     ///
     /// [ISO 639-2]: https://en.wikipedia.org/wiki/List_of_ISO_639-2_codes
-    pub fn supported_languages(&self) -> core::result::Result<LanguageIter, LanguageError> {
-        LanguageIter::new(self.supported_languages, LanguageIterKind::V1)
+    pub const fn supported_languages(&self) -> core::result::Result<LanguageIter, LanguageError> {
+        LanguageIter::new(self.0.supported_languages, LanguageIterKind::V1)
     }
 
     /// Get the human-readable name of the driver in the given language.
@@ -61,7 +55,7 @@ impl ComponentName1 {
     pub fn driver_name(&self, language: &str) -> Result<&CStr16> {
         let language = language_to_cstr(language)?;
         let mut driver_name = ptr::null();
-        unsafe { (self.get_driver_name)(self, language.as_ptr(), &mut driver_name) }
+        unsafe { (self.0.get_driver_name)(&self.0, language.as_ptr(), &mut driver_name) }
             .to_result_with_val(|| unsafe { CStr16::from_ptr(driver_name.cast()) })
     }
 
@@ -79,10 +73,10 @@ impl ComponentName1 {
         let language = language_to_cstr(language)?;
         let mut driver_name = ptr::null();
         unsafe {
-            (self.get_controller_name)(
-                self,
-                controller_handle,
-                child_handle,
+            (self.0.get_controller_name)(
+                &self.0,
+                controller_handle.as_ptr(),
+                Handle::opt_to_ptr(child_handle),
                 language.as_ptr(),
                 &mut driver_name,
             )
@@ -105,23 +99,10 @@ impl ComponentName1 {
 ///
 /// [ISO 639-2]: https://en.wikipedia.org/wiki/List_of_ISO_639-2_codes
 /// [RFC 4646]: https://www.rfc-editor.org/rfc/rfc4646
-#[unsafe_protocol("6a7a5cff-e8d9-4f70-bada-75ab3025ce14")]
-#[repr(C)]
-pub struct ComponentName2 {
-    get_driver_name: unsafe extern "efiapi" fn(
-        this: *const Self,
-        language: *const u8,
-        driver_name: *mut *const u16,
-    ) -> Status,
-    get_controller_name: unsafe extern "efiapi" fn(
-        this: *const Self,
-        controller_handle: Handle,
-        child_handle: Option<Handle>,
-        language: *const u8,
-        controller_name: *mut *const u16,
-    ) -> Status,
-    supported_languages: *const u8,
-}
+#[unsafe_protocol(ComponentName2Protocol::GUID)]
+#[derive(Debug)]
+#[repr(transparent)]
+pub struct ComponentName2(ComponentName2Protocol);
 
 impl ComponentName2 {
     /// Get an iterator over supported languages. Each language is identified by
@@ -129,8 +110,8 @@ impl ComponentName2 {
     /// as "en".
     ///
     /// [RFC 4646]: https://www.rfc-editor.org/rfc/rfc4646
-    pub fn supported_languages(&self) -> core::result::Result<LanguageIter, LanguageError> {
-        LanguageIter::new(self.supported_languages, LanguageIterKind::V2)
+    pub const fn supported_languages(&self) -> core::result::Result<LanguageIter, LanguageError> {
+        LanguageIter::new(self.0.supported_languages, LanguageIterKind::V2)
     }
 
     /// Get the human-readable name of the driver in the given language.
@@ -141,7 +122,7 @@ impl ComponentName2 {
     pub fn driver_name(&self, language: &str) -> Result<&CStr16> {
         let language = language_to_cstr(language)?;
         let mut driver_name = ptr::null();
-        unsafe { (self.get_driver_name)(self, language.as_ptr(), &mut driver_name) }
+        unsafe { (self.0.get_driver_name)(&self.0, language.as_ptr(), &mut driver_name) }
             .to_result_with_val(|| unsafe { CStr16::from_ptr(driver_name.cast()) })
     }
 
@@ -159,10 +140,10 @@ impl ComponentName2 {
         let language = language_to_cstr(language)?;
         let mut driver_name = ptr::null();
         unsafe {
-            (self.get_controller_name)(
-                self,
-                controller_handle,
-                child_handle,
+            (self.0.get_controller_name)(
+                &self.0,
+                controller_handle.as_ptr(),
+                Handle::opt_to_ptr(child_handle),
                 language.as_ptr(),
                 &mut driver_name,
             )
@@ -174,24 +155,24 @@ impl ComponentName2 {
 /// Wrapper around [`ComponentName1`] and [`ComponentName2`]. This will use
 /// [`ComponentName2`] if available, otherwise it will back to
 /// [`ComponentName1`].
-pub enum ComponentName<'a> {
+pub enum ComponentName {
     /// Opened [`ComponentName1`] protocol.
-    V1(ScopedProtocol<'a, ComponentName1>),
+    V1(ScopedProtocol<ComponentName1>),
 
     /// Opened [`ComponentName2`] protocol.
-    V2(ScopedProtocol<'a, ComponentName2>),
+    V2(ScopedProtocol<ComponentName2>),
 }
 
-impl<'a> ComponentName<'a> {
+impl ComponentName {
     /// Open the [`ComponentName2`] protocol if available, otherwise fall back to
     /// [`ComponentName1`].
-    pub fn open(boot_services: &'a BootServices, handle: Handle) -> Result<Self> {
-        if let Ok(cn2) = boot_services.open_protocol_exclusive::<ComponentName2>(handle) {
+    pub fn open(handle: Handle) -> Result<Self> {
+        if let Ok(cn2) = boot::open_protocol_exclusive::<ComponentName2>(handle) {
             Ok(Self::V2(cn2))
         } else {
-            Ok(Self::V1(
-                boot_services.open_protocol_exclusive::<ComponentName1>(handle)?,
-            ))
+            Ok(Self::V1(boot::open_protocol_exclusive::<ComponentName1>(
+                handle,
+            )?))
         }
     }
 
@@ -203,6 +184,7 @@ impl<'a> ComponentName<'a> {
     ///
     /// [ISO 639-2]: https://en.wikipedia.org/wiki/List_of_ISO_639-2_codes
     /// [RFC 4646]: https://www.rfc-editor.org/rfc/rfc4646
+    #[allow(clippy::missing_const_for_fn)] // false-positive since Rust 1.86
     pub fn supported_languages(&self) -> core::result::Result<LanguageIter, LanguageError> {
         match self {
             Self::V1(cn1) => cn1.supported_languages(),
@@ -240,11 +222,11 @@ impl<'a> ComponentName<'a> {
     }
 }
 
-impl<'a> Debug for ComponentName<'a> {
+impl Debug for ComponentName {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         match self {
-            ComponentName::V1(_) => f.debug_tuple("V1").finish(),
-            ComponentName::V2(_) => f.debug_tuple("V2").finish(),
+            Self::V1(_) => f.debug_tuple("V1").finish(),
+            Self::V2(_) => f.debug_tuple("V2").finish(),
         }
     }
 }
@@ -261,6 +243,16 @@ pub enum LanguageError {
     },
 }
 
+impl Display for LanguageError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ascii { index } => write!(f, "invalid character at index: {}", index),
+        }
+    }
+}
+
+impl core::error::Error for LanguageError {}
+
 #[derive(Debug, PartialEq)]
 enum LanguageIterKind {
     V1,
@@ -275,8 +267,8 @@ pub struct LanguageIter<'a> {
     kind: LanguageIterKind,
 }
 
-impl<'a> LanguageIter<'a> {
-    fn new(
+impl LanguageIter<'_> {
+    const fn new(
         languages: *const u8,
         kind: LanguageIterKind,
     ) -> core::result::Result<Self, LanguageError> {

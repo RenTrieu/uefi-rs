@@ -1,29 +1,28 @@
-use uefi::prelude::BootServices;
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use uefi::proto::network::snp::{InterruptStatus, ReceiveFlags, SimpleNetwork};
 use uefi::proto::network::MacAddress;
-use uefi::Status;
+use uefi::{boot, Status};
 
-pub fn test(bt: &BootServices) {
+pub fn test() {
     info!("Testing the simple network protocol");
 
-    let handles = bt.find_handles::<SimpleNetwork>().unwrap_or_default();
+    let handles = boot::find_handles::<SimpleNetwork>().unwrap_or_default();
 
     for handle in handles {
-        let simple_network = bt.open_protocol_exclusive::<SimpleNetwork>(handle);
+        let simple_network = boot::open_protocol_exclusive::<SimpleNetwork>(handle);
         if simple_network.is_err() {
             continue;
         }
         let simple_network = simple_network.unwrap();
 
         // Check shutdown
-        simple_network
-            .shutdown()
-            .expect("Failed to shutdown Simple Network");
+        let res = simple_network.shutdown();
+        assert!(res == Ok(()) || res == Err(Status::NOT_STARTED.into()));
 
         // Check stop
-        simple_network
-            .stop()
-            .expect("Failed to stop Simple Network");
+        let res = simple_network.stop();
+        assert!(res == Ok(()) || res == Err(Status::NOT_STARTED.into()));
 
         // Check start
         simple_network
@@ -35,7 +34,10 @@ pub fn test(bt: &BootServices) {
             .initialize(0, 0)
             .expect("Failed to initialize Simple Network");
 
-        simple_network.reset_statistics().unwrap();
+        // edk2 virtio-net driver does not support statistics, so
+        // allow UNSUPPORTED (same for collect_statistics below).
+        let res = simple_network.reset_statistics();
+        assert!(res == Ok(()) || res == Err(Status::UNSUPPORTED.into()));
 
         // Reading the interrupt status clears it
         simple_network.get_interrupt_status().unwrap();
@@ -43,7 +45,7 @@ pub fn test(bt: &BootServices) {
         // Set receive filters
         simple_network
             .receive_filters(
-                ReceiveFlags::UNICAST | ReceiveFlags::MULTICAST | ReceiveFlags::BROADCAST,
+                ReceiveFlags::UNICAST | ReceiveFlags::BROADCAST,
                 ReceiveFlags::empty(),
                 false,
                 None,
@@ -51,7 +53,9 @@ pub fn test(bt: &BootServices) {
             .expect("Failed to set receive filters");
 
         // Check media
-        if !simple_network.mode().media_present_supported || !simple_network.mode().media_present {
+        if !bool::from(simple_network.mode().media_present_supported)
+            || !bool::from(simple_network.mode().media_present)
+        {
             continue;
         }
 
@@ -102,7 +106,7 @@ pub fn test(bt: &BootServices) {
         if simple_network.receive(&mut buffer, None, None, None, None)
             == Err(Status::NOT_READY.into())
         {
-            bt.stall(1_000_000);
+            boot::stall(1_000_000);
 
             simple_network
                 .receive(&mut buffer, None, None, None, None)
@@ -112,13 +116,22 @@ pub fn test(bt: &BootServices) {
         assert_eq!(buffer[42..47], [4, 4, 3, 2, 1]);
 
         // Get stats
-        let stats = simple_network
-            .collect_statistics()
-            .expect("Failed to collect statistics");
-        info!("Stats: {:?}", stats);
+        let res = simple_network.collect_statistics();
+        match res {
+            Ok(stats) => {
+                info!("Stats: {:?}", stats);
 
-        // One frame should have been transmitted and one received
-        assert_eq!(stats.tx_total_frames().unwrap(), 1);
-        assert_eq!(stats.rx_total_frames().unwrap(), 1);
+                // One frame should have been transmitted and one received
+                assert_eq!(stats.tx_total_frames().unwrap(), 1);
+                assert_eq!(stats.rx_total_frames().unwrap(), 1);
+            }
+            Err(e) => {
+                if e == Status::UNSUPPORTED.into() {
+                    info!("Stats: unsupported.");
+                } else {
+                    panic!("{e}");
+                }
+            }
+        }
     }
 }

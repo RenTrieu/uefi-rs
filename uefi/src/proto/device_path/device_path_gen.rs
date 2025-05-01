@@ -1,29 +1,32 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // DO NOT EDIT
 //
 // This file was automatically generated with:
 // `cargo xtask gen-code`
 //
 // See `/xtask/src/device_path/README.md` for more details.
+#![allow(clippy::missing_const_for_fn)]
 
 use crate::data_types::UnalignedSlice;
+use crate::mem::memory_map::MemoryType;
 use crate::polyfill::maybe_uninit_slice_as_mut_ptr;
 use crate::proto::device_path::{
-    DevicePathHeader, DevicePathNode, DeviceSubType, DeviceType, NodeConversionError,
+    self, DevicePathHeader, DevicePathNode, DeviceSubType, DeviceType, NodeConversionError,
 };
 use crate::proto::network::IpAddress;
-use crate::table::boot::MemoryType;
 use crate::{guid, Guid};
 use bitflags::bitflags;
 use core::mem::{size_of, size_of_val};
 use core::ptr::addr_of;
 use core::{fmt, slice};
-use ptr_meta::{Pointee, PtrExt};
+use ptr_meta::Pointee;
 /// Device path nodes for [`DeviceType::END`].
 pub mod end {
     use super::*;
     /// Node that terminates a [`DevicePathInstance`].
     ///
-    /// [`DevicePathInstance`]: crate::proto::device_path::DevicePathInstance
+    /// [`DevicePathInstance`]: device_path::DevicePathInstance
     #[repr(C, packed)]
     pub struct Instance {
         pub(super) header: DevicePathHeader,
@@ -40,6 +43,12 @@ pub mod end {
     impl TryFrom<&DevicePathNode> for &Instance {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::END
+                || node.sub_type() != DeviceSubType::END_INSTANCE
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Instance>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -52,7 +61,7 @@ pub mod end {
 
     /// Node that terminates an entire [`DevicePath`].
     ///
-    /// [`DevicePath`]: crate::proto::device_path::DevicePath
+    /// [`DevicePath`]: device_path::DevicePath
     #[repr(C, packed)]
     pub struct Entire {
         pub(super) header: DevicePathHeader,
@@ -69,6 +78,11 @@ pub mod end {
     impl TryFrom<&DevicePathNode> for &Entire {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::END || node.sub_type() != DeviceSubType::END_ENTIRE
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Entire>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -117,6 +131,12 @@ pub mod hardware {
     impl TryFrom<&DevicePathNode> for &Pci {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::HARDWARE
+                || node.sub_type() != DeviceSubType::HARDWARE_PCI
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Pci>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -153,6 +173,12 @@ pub mod hardware {
     impl TryFrom<&DevicePathNode> for &Pccard {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::HARDWARE
+                || node.sub_type() != DeviceSubType::HARDWARE_PCCARD
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Pccard>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -205,6 +231,12 @@ pub mod hardware {
     impl TryFrom<&DevicePathNode> for &MemoryMapped {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::HARDWARE
+                || node.sub_type() != DeviceSubType::HARDWARE_MEMORY_MAPPED
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<MemoryMapped>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -244,7 +276,7 @@ pub mod hardware {
                 .field("vendor_guid", &{ self.vendor_guid })
                 .field("vendor_defined_data", {
                     let ptr = addr_of!(self.vendor_defined_data);
-                    let (ptr, len) = PtrExt::to_raw_parts(ptr);
+                    let (ptr, len) = ptr_meta::to_raw_parts(ptr);
                     let byte_len = size_of::<u8>() * len;
                     unsafe { &slice::from_raw_parts(ptr.cast::<u8>(), byte_len) }
                 })
@@ -255,6 +287,12 @@ pub mod hardware {
     impl TryFrom<&DevicePathNode> for &Vendor {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::HARDWARE
+                || node.sub_type() != DeviceSubType::HARDWARE_VENDOR
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             let static_size = 20usize;
             let dst_size = size_of_val(node)
                 .checked_sub(static_size)
@@ -296,6 +334,12 @@ pub mod hardware {
     impl TryFrom<&DevicePathNode> for &Controller {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::HARDWARE
+                || node.sub_type() != DeviceSubType::HARDWARE_CONTROLLER
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Controller>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -311,14 +355,14 @@ pub mod hardware {
     #[repr(C, packed)]
     pub struct Bmc {
         pub(super) header: DevicePathHeader,
-        pub(super) interface_type: crate::proto::device_path::hardware::BmcInterfaceType,
+        pub(super) interface_type: device_path::hardware::BmcInterfaceType,
         pub(super) base_address: u64,
     }
 
     impl Bmc {
         /// Host interface type.
         #[must_use]
-        pub fn interface_type(&self) -> crate::proto::device_path::hardware::BmcInterfaceType {
+        pub fn interface_type(&self) -> device_path::hardware::BmcInterfaceType {
             self.interface_type
         }
 
@@ -343,6 +387,12 @@ pub mod hardware {
     impl TryFrom<&DevicePathNode> for &Bmc {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::HARDWARE
+                || node.sub_type() != DeviceSubType::HARDWARE_BMC
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Bmc>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -397,6 +447,10 @@ pub mod acpi {
     impl TryFrom<&DevicePathNode> for &Acpi {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::ACPI || node.sub_type() != DeviceSubType::ACPI {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Acpi>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -482,6 +536,12 @@ pub mod acpi {
     impl TryFrom<&DevicePathNode> for &Expanded {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::ACPI
+                || node.sub_type() != DeviceSubType::ACPI_EXPANDED
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             let static_size = 16usize;
             let dst_size = size_of_val(node)
                 .checked_sub(static_size)
@@ -512,7 +572,7 @@ pub mod acpi {
         #[must_use]
         pub fn adr(&self) -> UnalignedSlice<u32> {
             let ptr: *const [u32] = addr_of!(self.adr);
-            let (ptr, len): (*const (), usize) = PtrExt::to_raw_parts(ptr);
+            let (ptr, len): (*const (), usize) = ptr_meta::to_raw_parts(ptr);
             unsafe { UnalignedSlice::new(ptr.cast::<u32>(), len) }
         }
     }
@@ -522,7 +582,7 @@ pub mod acpi {
             f.debug_struct("Adr")
                 .field("adr", {
                     let ptr = addr_of!(self.adr);
-                    let (ptr, len) = PtrExt::to_raw_parts(ptr);
+                    let (ptr, len) = ptr_meta::to_raw_parts(ptr);
                     let byte_len = size_of::<u32>() * len;
                     unsafe { &slice::from_raw_parts(ptr.cast::<u8>(), byte_len) }
                 })
@@ -533,6 +593,11 @@ pub mod acpi {
     impl TryFrom<&DevicePathNode> for &Adr {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::ACPI || node.sub_type() != DeviceSubType::ACPI_ADR
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             let static_size = 4usize;
             let dst_size = size_of_val(node)
                 .checked_sub(static_size)
@@ -574,6 +639,12 @@ pub mod acpi {
     impl TryFrom<&DevicePathNode> for &Nvdimm {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::ACPI
+                || node.sub_type() != DeviceSubType::ACPI_NVDIMM
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Nvdimm>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -705,21 +776,21 @@ pub mod messaging {
     #[repr(C, packed)]
     pub struct Atapi {
         pub(super) header: DevicePathHeader,
-        pub(super) primary_secondary: crate::proto::device_path::messaging::PrimarySecondary,
-        pub(super) master_slave: crate::proto::device_path::messaging::MasterSlave,
+        pub(super) primary_secondary: device_path::messaging::PrimarySecondary,
+        pub(super) master_slave: device_path::messaging::MasterSlave,
         pub(super) logical_unit_number: u16,
     }
 
     impl Atapi {
         /// Whether the ATAPI device is primary or secondary.
         #[must_use]
-        pub fn primary_secondary(&self) -> crate::proto::device_path::messaging::PrimarySecondary {
+        pub fn primary_secondary(&self) -> device_path::messaging::PrimarySecondary {
             self.primary_secondary
         }
 
         /// Whether the ATAPI device is master or slave.
         #[must_use]
-        pub fn master_slave(&self) -> crate::proto::device_path::messaging::MasterSlave {
+        pub fn master_slave(&self) -> device_path::messaging::MasterSlave {
             self.master_slave
         }
 
@@ -743,6 +814,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &Atapi {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_ATAPI
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Atapi>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -787,6 +864,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &Scsi {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_SCSI
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Scsi>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -833,6 +916,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &FibreChannel {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_FIBRE_CHANNEL
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<FibreChannel>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -879,6 +968,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &FibreChannelEx {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_FIBRE_CHANNEL_EX
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<FibreChannelEx>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -918,6 +1013,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &Ieee1394 {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_1394
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Ieee1394>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -962,6 +1063,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &Usb {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_USB
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Usb>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -1019,6 +1126,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &Sata {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_SATA
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Sata>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -1063,7 +1176,7 @@ pub mod messaging {
         #[must_use]
         pub fn serial_number(&self) -> UnalignedSlice<u16> {
             let ptr: *const [u16] = addr_of!(self.serial_number);
-            let (ptr, len): (*const (), usize) = PtrExt::to_raw_parts(ptr);
+            let (ptr, len): (*const (), usize) = ptr_meta::to_raw_parts(ptr);
             unsafe { UnalignedSlice::new(ptr.cast::<u16>(), len) }
         }
     }
@@ -1076,7 +1189,7 @@ pub mod messaging {
                 .field("device_product_id", &{ self.device_product_id })
                 .field("serial_number", {
                     let ptr = addr_of!(self.serial_number);
-                    let (ptr, len) = PtrExt::to_raw_parts(ptr);
+                    let (ptr, len) = ptr_meta::to_raw_parts(ptr);
                     let byte_len = size_of::<u16>() * len;
                     unsafe { &slice::from_raw_parts(ptr.cast::<u8>(), byte_len) }
                 })
@@ -1087,6 +1200,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &UsbWwid {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_USB_WWID
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             let static_size = 10usize;
             let dst_size = size_of_val(node)
                 .checked_sub(static_size)
@@ -1128,6 +1247,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &DeviceLogicalUnit {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_DEVICE_LOGICAL_UNIT
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<DeviceLogicalUnit>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -1196,6 +1321,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &UsbClass {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_USB_CLASS
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<UsbClass>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -1232,6 +1363,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &I2o {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_I2O
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<I2o>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -1277,6 +1414,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &MacAddress {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_MAC_ADDRESS
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<MacAddress>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -1296,7 +1439,7 @@ pub mod messaging {
         pub(super) local_port: u16,
         pub(super) remote_port: u16,
         pub(super) protocol: u16,
-        pub(super) ip_address_origin: crate::proto::device_path::messaging::Ipv4AddressOrigin,
+        pub(super) ip_address_origin: device_path::messaging::Ipv4AddressOrigin,
         pub(super) gateway_ip_address: [u8; 4usize],
         pub(super) subnet_mask: [u8; 4usize],
     }
@@ -1335,7 +1478,7 @@ pub mod messaging {
 
         /// Whether the source IP address is static or assigned via DHCP.
         #[must_use]
-        pub fn ip_address_origin(&self) -> crate::proto::device_path::messaging::Ipv4AddressOrigin {
+        pub fn ip_address_origin(&self) -> device_path::messaging::Ipv4AddressOrigin {
             self.ip_address_origin
         }
 
@@ -1370,6 +1513,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &Ipv4 {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_IPV4
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Ipv4>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -1389,7 +1538,7 @@ pub mod messaging {
         pub(super) local_port: u16,
         pub(super) remote_port: u16,
         pub(super) protocol: u16,
-        pub(super) ip_address_origin: crate::proto::device_path::messaging::Ipv6AddressOrigin,
+        pub(super) ip_address_origin: device_path::messaging::Ipv6AddressOrigin,
         pub(super) prefix_length: u8,
         pub(super) gateway_ip_address: [u8; 16usize],
     }
@@ -1428,7 +1577,7 @@ pub mod messaging {
 
         /// Origin of the local IP address.
         #[must_use]
-        pub fn ip_address_origin(&self) -> crate::proto::device_path::messaging::Ipv6AddressOrigin {
+        pub fn ip_address_origin(&self) -> device_path::messaging::Ipv6AddressOrigin {
             self.ip_address_origin
         }
 
@@ -1463,6 +1612,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &Ipv6 {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_IPV6
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Ipv6>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -1499,6 +1654,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &Vlan {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_VLAN
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Vlan>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -1513,7 +1674,7 @@ pub mod messaging {
     #[repr(C, packed)]
     pub struct Infiniband {
         pub(super) header: DevicePathHeader,
-        pub(super) resource_flags: crate::proto::device_path::messaging::InfinibandResourceFlags,
+        pub(super) resource_flags: device_path::messaging::InfinibandResourceFlags,
         pub(super) port_gid: [u8; 16usize],
         pub(super) ioc_guid_or_service_id: u64,
         pub(super) target_port_id: u64,
@@ -1523,9 +1684,7 @@ pub mod messaging {
     impl Infiniband {
         /// Flags to identify/manage InfiniBand elements.
         #[must_use]
-        pub fn resource_flags(
-            &self,
-        ) -> crate::proto::device_path::messaging::InfinibandResourceFlags {
+        pub fn resource_flags(&self) -> device_path::messaging::InfinibandResourceFlags {
             self.resource_flags
         }
 
@@ -1571,6 +1730,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &Infiniband {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_INFINIBAND
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Infiniband>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -1588,8 +1753,8 @@ pub mod messaging {
         pub(super) _reserved: u32,
         pub(super) baud_rate: u64,
         pub(super) data_bits: u8,
-        pub(super) parity: crate::proto::device_path::messaging::Parity,
-        pub(super) stop_bits: crate::proto::device_path::messaging::StopBits,
+        pub(super) parity: device_path::messaging::Parity,
+        pub(super) stop_bits: device_path::messaging::StopBits,
     }
 
     impl Uart {
@@ -1607,13 +1772,13 @@ pub mod messaging {
 
         /// Parity setting.
         #[must_use]
-        pub fn parity(&self) -> crate::proto::device_path::messaging::Parity {
+        pub fn parity(&self) -> device_path::messaging::Parity {
             self.parity
         }
 
         /// Number of stop bits.
         #[must_use]
-        pub fn stop_bits(&self) -> crate::proto::device_path::messaging::StopBits {
+        pub fn stop_bits(&self) -> device_path::messaging::StopBits {
             self.stop_bits
         }
     }
@@ -1633,6 +1798,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &Uart {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_UART
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Uart>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -1672,7 +1843,7 @@ pub mod messaging {
                 .field("vendor_guid", &{ self.vendor_guid })
                 .field("vendor_defined_data", {
                     let ptr = addr_of!(self.vendor_defined_data);
-                    let (ptr, len) = PtrExt::to_raw_parts(ptr);
+                    let (ptr, len) = ptr_meta::to_raw_parts(ptr);
                     let byte_len = size_of::<u8>() * len;
                     unsafe { &slice::from_raw_parts(ptr.cast::<u8>(), byte_len) }
                 })
@@ -1683,6 +1854,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &Vendor {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_VENDOR
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             let static_size = 20usize;
             let dst_size = size_of_val(node)
                 .checked_sub(static_size)
@@ -1748,6 +1925,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &SasEx {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_SCSI_SAS_EX
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<SasEx>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -1763,8 +1946,8 @@ pub mod messaging {
     #[derive(Pointee)]
     pub struct Iscsi {
         pub(super) header: DevicePathHeader,
-        pub(super) protocol: crate::proto::device_path::messaging::IscsiProtocol,
-        pub(super) options: crate::proto::device_path::messaging::IscsiLoginOptions,
+        pub(super) protocol: device_path::messaging::IscsiProtocol,
+        pub(super) options: device_path::messaging::IscsiLoginOptions,
         pub(super) logical_unit_number: [u8; 8usize],
         pub(super) target_portal_group_tag: u16,
         pub(super) iscsi_target_name: [u8],
@@ -1773,13 +1956,13 @@ pub mod messaging {
     impl Iscsi {
         /// Network protocol.
         #[must_use]
-        pub fn protocol(&self) -> crate::proto::device_path::messaging::IscsiProtocol {
+        pub fn protocol(&self) -> device_path::messaging::IscsiProtocol {
             self.protocol
         }
 
         /// iSCSI login options (bitfield).
         #[must_use]
-        pub fn options(&self) -> crate::proto::device_path::messaging::IscsiLoginOptions {
+        pub fn options(&self) -> device_path::messaging::IscsiLoginOptions {
             self.options
         }
 
@@ -1816,7 +1999,7 @@ pub mod messaging {
                 .field("target_portal_group_tag", &{ self.target_portal_group_tag })
                 .field("iscsi_target_name", {
                     let ptr = addr_of!(self.iscsi_target_name);
-                    let (ptr, len) = PtrExt::to_raw_parts(ptr);
+                    let (ptr, len) = ptr_meta::to_raw_parts(ptr);
                     let byte_len = size_of::<u8>() * len;
                     unsafe { &slice::from_raw_parts(ptr.cast::<u8>(), byte_len) }
                 })
@@ -1827,6 +2010,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &Iscsi {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_ISCSI
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             let static_size = 18usize;
             let dst_size = size_of_val(node)
                 .checked_sub(static_size)
@@ -1880,6 +2069,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &NvmeNamespace {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_NVME_NAMESPACE
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<NvmeNamespace>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -1911,7 +2106,7 @@ pub mod messaging {
             f.debug_struct("Uri")
                 .field("value", {
                     let ptr = addr_of!(self.value);
-                    let (ptr, len) = PtrExt::to_raw_parts(ptr);
+                    let (ptr, len) = ptr_meta::to_raw_parts(ptr);
                     let byte_len = size_of::<u8>() * len;
                     unsafe { &slice::from_raw_parts(ptr.cast::<u8>(), byte_len) }
                 })
@@ -1922,6 +2117,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &Uri {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_URI
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             let static_size = 4usize;
             let dst_size = size_of_val(node)
                 .checked_sub(static_size)
@@ -1971,6 +2172,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &Ufs {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_UFS
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Ufs>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -2007,6 +2214,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &Sd {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_SD
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Sd>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -2043,6 +2256,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &Bluetooth {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_BLUETOOTH
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Bluetooth>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -2079,6 +2298,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &Wifi {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_WIFI
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Wifi>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -2115,6 +2340,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &Emmc {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_EMMC
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Emmc>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -2130,7 +2361,7 @@ pub mod messaging {
     pub struct BluetoothLe {
         pub(super) header: DevicePathHeader,
         pub(super) device_address: [u8; 6usize],
-        pub(super) address_type: crate::proto::device_path::messaging::BluetoothLeAddressType,
+        pub(super) address_type: device_path::messaging::BluetoothLeAddressType,
     }
 
     impl BluetoothLe {
@@ -2142,7 +2373,7 @@ pub mod messaging {
 
         /// Address type.
         #[must_use]
-        pub fn address_type(&self) -> crate::proto::device_path::messaging::BluetoothLeAddressType {
+        pub fn address_type(&self) -> device_path::messaging::BluetoothLeAddressType {
             self.address_type
         }
     }
@@ -2159,6 +2390,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &BluetoothLe {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_BLUETOOTH_LE
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<BluetoothLe>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -2174,14 +2411,14 @@ pub mod messaging {
     #[derive(Pointee)]
     pub struct Dns {
         pub(super) header: DevicePathHeader,
-        pub(super) address_type: crate::proto::device_path::messaging::DnsAddressType,
+        pub(super) address_type: device_path::messaging::DnsAddressType,
         pub(super) addresses: [IpAddress],
     }
 
     impl Dns {
         /// Whether the addresses are IPv4 or IPv6.
         #[must_use]
-        pub fn address_type(&self) -> crate::proto::device_path::messaging::DnsAddressType {
+        pub fn address_type(&self) -> device_path::messaging::DnsAddressType {
             self.address_type
         }
 
@@ -2189,7 +2426,7 @@ pub mod messaging {
         #[must_use]
         pub fn addresses(&self) -> UnalignedSlice<IpAddress> {
             let ptr: *const [IpAddress] = addr_of!(self.addresses);
-            let (ptr, len): (*const (), usize) = PtrExt::to_raw_parts(ptr);
+            let (ptr, len): (*const (), usize) = ptr_meta::to_raw_parts(ptr);
             unsafe { UnalignedSlice::new(ptr.cast::<IpAddress>(), len) }
         }
     }
@@ -2200,7 +2437,7 @@ pub mod messaging {
                 .field("address_type", &{ self.address_type })
                 .field("addresses", {
                     let ptr = addr_of!(self.addresses);
-                    let (ptr, len) = PtrExt::to_raw_parts(ptr);
+                    let (ptr, len) = ptr_meta::to_raw_parts(ptr);
                     let byte_len = size_of::<IpAddress>() * len;
                     unsafe { &slice::from_raw_parts(ptr.cast::<u8>(), byte_len) }
                 })
@@ -2211,6 +2448,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &Dns {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_DNS
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             let static_size = 5usize;
             let dst_size = size_of_val(node)
                 .checked_sub(static_size)
@@ -2252,6 +2495,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &NvdimmNamespace {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_NVDIMM_NAMESPACE
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<NvdimmNamespace>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -2267,21 +2516,21 @@ pub mod messaging {
     #[derive(Pointee)]
     pub struct RestService {
         pub(super) header: DevicePathHeader,
-        pub(super) service_type: crate::proto::device_path::messaging::RestServiceType,
-        pub(super) access_mode: crate::proto::device_path::messaging::RestServiceAccessMode,
+        pub(super) service_type: device_path::messaging::RestServiceType,
+        pub(super) access_mode: device_path::messaging::RestServiceAccessMode,
         pub(super) vendor_guid_and_data: [u8],
     }
 
     impl RestService {
         /// Type of REST service.
         #[must_use]
-        pub fn service_type(&self) -> crate::proto::device_path::messaging::RestServiceType {
+        pub fn service_type(&self) -> device_path::messaging::RestServiceType {
             self.service_type
         }
 
         /// Whether the service is in-band or out-of-band.
         #[must_use]
-        pub fn access_mode(&self) -> crate::proto::device_path::messaging::RestServiceAccessMode {
+        pub fn access_mode(&self) -> device_path::messaging::RestServiceAccessMode {
             self.access_mode
         }
     }
@@ -2293,7 +2542,7 @@ pub mod messaging {
                 .field("access_mode", &{ self.access_mode })
                 .field("vendor_guid_and_data", {
                     let ptr = addr_of!(self.vendor_guid_and_data);
-                    let (ptr, len) = PtrExt::to_raw_parts(ptr);
+                    let (ptr, len) = ptr_meta::to_raw_parts(ptr);
                     let byte_len = size_of::<u8>() * len;
                     unsafe { &slice::from_raw_parts(ptr.cast::<u8>(), byte_len) }
                 })
@@ -2304,6 +2553,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &RestService {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_REST_SERVICE
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             let static_size = 6usize;
             let dst_size = size_of_val(node)
                 .checked_sub(static_size)
@@ -2358,7 +2613,7 @@ pub mod messaging {
                 .field("nid", &{ self.nid })
                 .field("subsystem_nqn", {
                     let ptr = addr_of!(self.subsystem_nqn);
-                    let (ptr, len) = PtrExt::to_raw_parts(ptr);
+                    let (ptr, len) = ptr_meta::to_raw_parts(ptr);
                     let byte_len = size_of::<u8>() * len;
                     unsafe { &slice::from_raw_parts(ptr.cast::<u8>(), byte_len) }
                 })
@@ -2369,6 +2624,12 @@ pub mod messaging {
     impl TryFrom<&DevicePathNode> for &NvmeOfNamespace {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MESSAGING
+                || node.sub_type() != DeviceSubType::MESSAGING_NVME_OF_NAMESPACE
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             let static_size = 21usize;
             let dst_size = size_of_val(node)
                 .checked_sub(static_size)
@@ -2411,6 +2672,17 @@ pub mod messaging {
 
     newtype_enum! { # [doc = " UART number of stop bits."] pub enum StopBits : u8 => { # [doc = " Default number of stop bits."] DEFAULT = 0x00 , # [doc = " 1 stop bit."] ONE = 0x01 , # [doc = " 1.5 stop bits."] ONE_POINT_FIVE = 0x02 , # [doc = " 2 stop bits."] TWO = 0x03 , }
 
+    }
+
+    impl Vendor {
+        /// PC-ANSI terminal GUID.
+        pub const PC_ANSI: Guid = guid!("e0c14753-f9be-11d2-9a0c-0090273fc14d");
+        /// VT-100 terminal GUID.
+        pub const VT_100: Guid = guid!("dfa66065-b419-11d3-9a2d-0090273fc14d");
+        /// VT-100+ terminal GUID.
+        pub const VT_100_PLUS: Guid = guid!("7baec70b-57e0-4c76-8e87-2f9e28088343");
+        /// VT-UTF8 terminal GUID.
+        pub const VT_UTF8: Guid = guid!("ad15a0d6-8bec-4acf-a073-d01de77e2d88");
     }
 
     newtype_enum! { # [doc = " iSCSI network protocol."] pub enum IscsiProtocol : u16 => { # [doc = " TCP."] TCP = 0x0000 , }
@@ -2468,7 +2740,7 @@ pub mod media {
         pub(super) partition_start: u64,
         pub(super) partition_size: u64,
         pub(super) partition_signature: [u8; 16usize],
-        pub(super) partition_format: crate::proto::device_path::media::PartitionFormat,
+        pub(super) partition_format: device_path::media::PartitionFormat,
         pub(super) signature_type: u8,
     }
 
@@ -2493,7 +2765,7 @@ pub mod media {
 
         /// Partition format.
         #[must_use]
-        pub fn partition_format(&self) -> crate::proto::device_path::media::PartitionFormat {
+        pub fn partition_format(&self) -> device_path::media::PartitionFormat {
             self.partition_format
         }
     }
@@ -2514,6 +2786,12 @@ pub mod media {
     impl TryFrom<&DevicePathNode> for &HardDrive {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MEDIA
+                || node.sub_type() != DeviceSubType::MEDIA_HARD_DRIVE
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<HardDrive>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -2567,6 +2845,12 @@ pub mod media {
     impl TryFrom<&DevicePathNode> for &CdRom {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MEDIA
+                || node.sub_type() != DeviceSubType::MEDIA_CD_ROM
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<CdRom>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -2606,7 +2890,7 @@ pub mod media {
                 .field("vendor_guid", &{ self.vendor_guid })
                 .field("vendor_defined_data", {
                     let ptr = addr_of!(self.vendor_defined_data);
-                    let (ptr, len) = PtrExt::to_raw_parts(ptr);
+                    let (ptr, len) = ptr_meta::to_raw_parts(ptr);
                     let byte_len = size_of::<u8>() * len;
                     unsafe { &slice::from_raw_parts(ptr.cast::<u8>(), byte_len) }
                 })
@@ -2617,6 +2901,12 @@ pub mod media {
     impl TryFrom<&DevicePathNode> for &Vendor {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MEDIA
+                || node.sub_type() != DeviceSubType::MEDIA_VENDOR
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             let static_size = 20usize;
             let dst_size = size_of_val(node)
                 .checked_sub(static_size)
@@ -2645,7 +2935,7 @@ pub mod media {
         #[must_use]
         pub fn path_name(&self) -> UnalignedSlice<u16> {
             let ptr: *const [u16] = addr_of!(self.path_name);
-            let (ptr, len): (*const (), usize) = PtrExt::to_raw_parts(ptr);
+            let (ptr, len): (*const (), usize) = ptr_meta::to_raw_parts(ptr);
             unsafe { UnalignedSlice::new(ptr.cast::<u16>(), len) }
         }
     }
@@ -2655,7 +2945,7 @@ pub mod media {
             f.debug_struct("FilePath")
                 .field("path_name", {
                     let ptr = addr_of!(self.path_name);
-                    let (ptr, len) = PtrExt::to_raw_parts(ptr);
+                    let (ptr, len) = ptr_meta::to_raw_parts(ptr);
                     let byte_len = size_of::<u16>() * len;
                     unsafe { &slice::from_raw_parts(ptr.cast::<u8>(), byte_len) }
                 })
@@ -2666,6 +2956,12 @@ pub mod media {
     impl TryFrom<&DevicePathNode> for &FilePath {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MEDIA
+                || node.sub_type() != DeviceSubType::MEDIA_FILE_PATH
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             let static_size = 4usize;
             let dst_size = size_of_val(node)
                 .checked_sub(static_size)
@@ -2707,6 +3003,12 @@ pub mod media {
     impl TryFrom<&DevicePathNode> for &Protocol {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MEDIA
+                || node.sub_type() != DeviceSubType::MEDIA_PROTOCOL
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<Protocol>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -2738,7 +3040,7 @@ pub mod media {
             f.debug_struct("PiwgFirmwareFile")
                 .field("data", {
                     let ptr = addr_of!(self.data);
-                    let (ptr, len) = PtrExt::to_raw_parts(ptr);
+                    let (ptr, len) = ptr_meta::to_raw_parts(ptr);
                     let byte_len = size_of::<u8>() * len;
                     unsafe { &slice::from_raw_parts(ptr.cast::<u8>(), byte_len) }
                 })
@@ -2749,6 +3051,12 @@ pub mod media {
     impl TryFrom<&DevicePathNode> for &PiwgFirmwareFile {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MEDIA
+                || node.sub_type() != DeviceSubType::MEDIA_PIWG_FIRMWARE_FILE
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             let static_size = 4usize;
             let dst_size = size_of_val(node)
                 .checked_sub(static_size)
@@ -2786,7 +3094,7 @@ pub mod media {
             f.debug_struct("PiwgFirmwareVolume")
                 .field("data", {
                     let ptr = addr_of!(self.data);
-                    let (ptr, len) = PtrExt::to_raw_parts(ptr);
+                    let (ptr, len) = ptr_meta::to_raw_parts(ptr);
                     let byte_len = size_of::<u8>() * len;
                     unsafe { &slice::from_raw_parts(ptr.cast::<u8>(), byte_len) }
                 })
@@ -2797,6 +3105,12 @@ pub mod media {
     impl TryFrom<&DevicePathNode> for &PiwgFirmwareVolume {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MEDIA
+                || node.sub_type() != DeviceSubType::MEDIA_PIWG_FIRMWARE_VOLUME
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             let static_size = 4usize;
             let dst_size = size_of_val(node)
                 .checked_sub(static_size)
@@ -2849,6 +3163,12 @@ pub mod media {
     impl TryFrom<&DevicePathNode> for &RelativeOffsetRange {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MEDIA
+                || node.sub_type() != DeviceSubType::MEDIA_RELATIVE_OFFSET_RANGE
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<RelativeOffsetRange>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -2865,7 +3185,7 @@ pub mod media {
         pub(super) header: DevicePathHeader,
         pub(super) starting_address: u64,
         pub(super) ending_address: u64,
-        pub(super) disk_type: crate::proto::device_path::media::RamDiskType,
+        pub(super) disk_type: device_path::media::RamDiskType,
         pub(super) disk_instance: u16,
     }
 
@@ -2884,7 +3204,7 @@ pub mod media {
 
         /// Type of RAM disk.
         #[must_use]
-        pub fn disk_type(&self) -> crate::proto::device_path::media::RamDiskType {
+        pub fn disk_type(&self) -> device_path::media::RamDiskType {
             self.disk_type
         }
 
@@ -2909,6 +3229,12 @@ pub mod media {
     impl TryFrom<&DevicePathNode> for &RamDisk {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::MEDIA
+                || node.sub_type() != DeviceSubType::MEDIA_RAM_DISK
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             if size_of_val(node) != size_of::<RamDisk>() {
                 return Err(NodeConversionError::InvalidLength);
             }
@@ -3008,7 +3334,7 @@ pub mod bios_boot_spec {
                 .field("status_flag", &{ self.status_flag })
                 .field("description_string", {
                     let ptr = addr_of!(self.description_string);
-                    let (ptr, len) = PtrExt::to_raw_parts(ptr);
+                    let (ptr, len) = ptr_meta::to_raw_parts(ptr);
                     let byte_len = size_of::<u8>() * len;
                     unsafe { &slice::from_raw_parts(ptr.cast::<u8>(), byte_len) }
                 })
@@ -3019,6 +3345,12 @@ pub mod bios_boot_spec {
     impl TryFrom<&DevicePathNode> for &BootSpecification {
         type Error = NodeConversionError;
         fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+            if node.device_type() != DeviceType::BIOS_BOOT_SPEC
+                || node.sub_type() != DeviceSubType::BIOS_BOOT_SPECIFICATION
+            {
+                return Err(NodeConversionError::DifferentType);
+            }
+
             let static_size = 8usize;
             let dst_size = size_of_val(node)
                 .checked_sub(static_size)
@@ -3042,11 +3374,11 @@ pub mod bios_boot_spec {
 pub enum DevicePathNodeEnum<'a> {
     /// Node that terminates a [`DevicePathInstance`].
     ///
-    /// [`DevicePathInstance`]: crate::proto::device_path::DevicePathInstance
+    /// [`DevicePathInstance`]: device_path::DevicePathInstance
     EndInstance(&'a end::Instance),
     /// Node that terminates an entire [`DevicePath`].
     ///
-    /// [`DevicePath`]: crate::proto::device_path::DevicePath
+    /// [`DevicePath`]: device_path::DevicePath
     EndEntire(&'a end::Entire),
     /// PCI hardware device path node.
     HardwarePci(&'a hardware::Pci),
@@ -3155,7 +3487,7 @@ pub enum DevicePathNodeEnum<'a> {
     BiosBootSpecBootSpecification(&'a bios_boot_spec::BootSpecification),
 }
 
-impl<'a> TryFrom<&DevicePathNode> for DevicePathNodeEnum<'a> {
+impl TryFrom<&DevicePathNode> for DevicePathNodeEnum<'_> {
     type Error = NodeConversionError;
     fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
         Ok(match node.full_type() {
@@ -3324,7 +3656,7 @@ pub mod build {
         use super::*;
         /// Node that terminates a [`DevicePathInstance`].
         ///
-        /// [`DevicePathInstance`]: crate::proto::device_path::DevicePathInstance
+        /// [`DevicePathInstance`]: device_path::DevicePathInstance
         #[derive(Debug)]
         pub struct Instance;
         unsafe impl BuildNode for Instance {
@@ -3337,21 +3669,18 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header =
+                    DevicePathHeader::new(DeviceType::END, DeviceSubType::END_INSTANCE, length);
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::END,
-                            sub_type: DeviceSubType::END_INSTANCE,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                 }
             }
         }
 
         /// Node that terminates an entire [`DevicePath`].
         ///
-        /// [`DevicePath`]: crate::proto::device_path::DevicePath
+        /// [`DevicePath`]: device_path::DevicePath
         #[derive(Debug)]
         pub struct Entire;
         unsafe impl BuildNode for Entire {
@@ -3364,14 +3693,11 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header =
+                    DevicePathHeader::new(DeviceType::END, DeviceSubType::END_ENTIRE, length);
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::END,
-                            sub_type: DeviceSubType::END_ENTIRE,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                 }
             }
         }
@@ -3399,14 +3725,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::HARDWARE,
+                    DeviceSubType::HARDWARE_PCI,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::HARDWARE,
-                            sub_type: DeviceSubType::HARDWARE_PCI,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<u8>()
@@ -3436,14 +3762,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::HARDWARE,
+                    DeviceSubType::HARDWARE_PCCARD,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::HARDWARE,
-                            sub_type: DeviceSubType::HARDWARE_PCCARD,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<u8>()
@@ -3473,14 +3799,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::HARDWARE,
+                    DeviceSubType::HARDWARE_MEMORY_MAPPED,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::HARDWARE,
-                            sub_type: DeviceSubType::HARDWARE_MEMORY_MAPPED,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<MemoryType>()
@@ -3506,7 +3832,7 @@ pub mod build {
             pub vendor_defined_data: &'a [u8],
         }
 
-        unsafe impl<'a> BuildNode for Vendor<'a> {
+        unsafe impl BuildNode for Vendor<'_> {
             fn size_in_bytes(&self) -> Result<u16, BuildError> {
                 let size = 20usize + size_of_val(self.vendor_defined_data);
                 u16::try_from(size).map_err(|_| BuildError::NodeTooBig)
@@ -3516,14 +3842,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::HARDWARE,
+                    DeviceSubType::HARDWARE_VENDOR,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::HARDWARE,
-                            sub_type: DeviceSubType::HARDWARE_VENDOR,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<Guid>()
@@ -3556,14 +3882,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::HARDWARE,
+                    DeviceSubType::HARDWARE_CONTROLLER,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::HARDWARE,
-                            sub_type: DeviceSubType::HARDWARE_CONTROLLER,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<u32>()
@@ -3577,7 +3903,7 @@ pub mod build {
         #[derive(Debug)]
         pub struct Bmc {
             /// Host interface type.
-            pub interface_type: crate::proto::device_path::hardware::BmcInterfaceType,
+            pub interface_type: device_path::hardware::BmcInterfaceType,
             /// Base address of the BMC. If the least-significant bit of the
             /// field is a 1 then the address is in I/O space, otherwise the
             /// address is memory-mapped.
@@ -3594,17 +3920,17 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::HARDWARE,
+                    DeviceSubType::HARDWARE_BMC,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::HARDWARE,
-                            sub_type: DeviceSubType::HARDWARE_BMC,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
-                        .cast::<crate::proto::device_path::hardware::BmcInterfaceType>()
+                        .cast::<device_path::hardware::BmcInterfaceType>()
                         .write_unaligned(self.interface_type);
                     out_ptr
                         .add(5usize)
@@ -3639,14 +3965,10 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(DeviceType::ACPI, DeviceSubType::ACPI, length);
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::ACPI,
-                            sub_type: DeviceSubType::ACPI,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr.add(4usize).cast::<u32>().write_unaligned(self.hid);
                     out_ptr.add(8usize).cast::<u32>().write_unaligned(self.uid);
                 }
@@ -3682,7 +4004,7 @@ pub mod build {
             pub cid_str: &'a [u8],
         }
 
-        unsafe impl<'a> BuildNode for Expanded<'a> {
+        unsafe impl BuildNode for Expanded<'_> {
             fn size_in_bytes(&self) -> Result<u16, BuildError> {
                 let size = 16usize
                     + size_of_val(self.hid_str)
@@ -3695,14 +4017,11 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header =
+                    DevicePathHeader::new(DeviceType::ACPI, DeviceSubType::ACPI_EXPANDED, length);
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::ACPI,
-                            sub_type: DeviceSubType::ACPI_EXPANDED,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     let mut dst_group_offset = 0;
                     out_ptr.add(4usize).cast::<u32>().write_unaligned(self.hid);
                     out_ptr.add(8usize).cast::<u32>().write_unaligned(self.uid);
@@ -3734,7 +4053,7 @@ pub mod build {
             pub adr: &'a AdrSlice,
         }
 
-        unsafe impl<'a> BuildNode for Adr<'a> {
+        unsafe impl BuildNode for Adr<'_> {
             fn size_in_bytes(&self) -> Result<u16, BuildError> {
                 let size = 4usize + size_of_val(self.adr);
                 u16::try_from(size).map_err(|_| BuildError::NodeTooBig)
@@ -3744,14 +4063,11 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header =
+                    DevicePathHeader::new(DeviceType::ACPI, DeviceSubType::ACPI_ADR, length);
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::ACPI,
-                            sub_type: DeviceSubType::ACPI_ADR,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     self.adr
                         .as_ptr()
                         .cast::<u8>()
@@ -3777,14 +4093,11 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header =
+                    DevicePathHeader::new(DeviceType::ACPI, DeviceSubType::ACPI_NVDIMM, length);
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::ACPI,
-                            sub_type: DeviceSubType::ACPI_NVDIMM,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<u32>()
@@ -3824,9 +4137,9 @@ pub mod build {
         #[derive(Debug)]
         pub struct Atapi {
             /// Whether the ATAPI device is primary or secondary.
-            pub primary_secondary: crate::proto::device_path::messaging::PrimarySecondary,
+            pub primary_secondary: device_path::messaging::PrimarySecondary,
             /// Whether the ATAPI device is master or slave.
-            pub master_slave: crate::proto::device_path::messaging::MasterSlave,
+            pub master_slave: device_path::messaging::MasterSlave,
             /// Logical Unit Number (LUN).
             pub logical_unit_number: u16,
         }
@@ -3841,21 +4154,21 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_ATAPI,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_ATAPI,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
-                        .cast::<crate::proto::device_path::messaging::PrimarySecondary>()
+                        .cast::<device_path::messaging::PrimarySecondary>()
                         .write_unaligned(self.primary_secondary);
                     out_ptr
                         .add(5usize)
-                        .cast::<crate::proto::device_path::messaging::MasterSlave>()
+                        .cast::<device_path::messaging::MasterSlave>()
                         .write_unaligned(self.master_slave);
                     out_ptr
                         .add(6usize)
@@ -3884,14 +4197,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_SCSI,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_SCSI,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<u16>()
@@ -3923,14 +4236,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_FIBRE_CHANNEL,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_FIBRE_CHANNEL,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr.add(4usize).write_bytes(0, size_of::<u32>());
                     out_ptr
                         .add(8usize)
@@ -3963,14 +4276,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_FIBRE_CHANNEL_EX,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_FIBRE_CHANNEL_EX,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr.add(4usize).write_bytes(0, size_of::<u32>());
                     out_ptr
                         .add(8usize)
@@ -4002,14 +4315,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_1394,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_1394,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr.add(4usize).write_bytes(0, size_of::<u32>());
                     out_ptr
                         .add(8usize)
@@ -4038,14 +4351,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_USB,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_USB,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<u8>()
@@ -4082,14 +4395,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_SATA,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_SATA,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<u16>()
@@ -4119,7 +4432,7 @@ pub mod build {
             pub serial_number: &'a [u16],
         }
 
-        unsafe impl<'a> BuildNode for UsbWwid<'a> {
+        unsafe impl BuildNode for UsbWwid<'_> {
             fn size_in_bytes(&self) -> Result<u16, BuildError> {
                 let size = 10usize + size_of_val(self.serial_number);
                 u16::try_from(size).map_err(|_| BuildError::NodeTooBig)
@@ -4129,14 +4442,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_USB_WWID,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_USB_WWID,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<u16>()
@@ -4177,14 +4490,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_DEVICE_LOGICAL_UNIT,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_DEVICE_LOGICAL_UNIT,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<u8>()
@@ -4218,14 +4531,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_USB_CLASS,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_USB_CLASS,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<u16>()
@@ -4267,14 +4580,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_I2O,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_I2O,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<u32>()
@@ -4303,14 +4616,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_MAC_ADDRESS,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_MAC_ADDRESS,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<[u8; 32usize]>()
@@ -4338,7 +4651,7 @@ pub mod build {
             /// <https://www.iana.org/assignments/protocol-numbers/protocol-numbers.xhtml>
             pub protocol: u16,
             /// Whether the source IP address is static or assigned via DHCP.
-            pub ip_address_origin: crate::proto::device_path::messaging::Ipv4AddressOrigin,
+            pub ip_address_origin: device_path::messaging::Ipv4AddressOrigin,
             /// Gateway IP address.
             pub gateway_ip_address: [u8; 4usize],
             /// Subnet mask.
@@ -4355,14 +4668,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_IPV4,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_IPV4,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<[u8; 4usize]>()
@@ -4385,7 +4698,7 @@ pub mod build {
                         .write_unaligned(self.protocol);
                     out_ptr
                         .add(18usize)
-                        .cast::<crate::proto::device_path::messaging::Ipv4AddressOrigin>()
+                        .cast::<device_path::messaging::Ipv4AddressOrigin>()
                         .write_unaligned(self.ip_address_origin);
                     out_ptr
                         .add(19usize)
@@ -4414,7 +4727,7 @@ pub mod build {
             /// <https://www.iana.org/assignments/protocol-numbers/protocol-numbers.xhtml>
             pub protocol: u16,
             /// Origin of the local IP address.
-            pub ip_address_origin: crate::proto::device_path::messaging::Ipv6AddressOrigin,
+            pub ip_address_origin: device_path::messaging::Ipv6AddressOrigin,
             /// Prefix length.
             pub prefix_length: u8,
             /// Gateway IP address.
@@ -4431,14 +4744,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_IPV6,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_IPV6,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<[u8; 16usize]>()
@@ -4461,7 +4774,7 @@ pub mod build {
                         .write_unaligned(self.protocol);
                     out_ptr
                         .add(42usize)
-                        .cast::<crate::proto::device_path::messaging::Ipv6AddressOrigin>()
+                        .cast::<device_path::messaging::Ipv6AddressOrigin>()
                         .write_unaligned(self.ip_address_origin);
                     out_ptr
                         .add(43usize)
@@ -4492,14 +4805,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_VLAN,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_VLAN,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<u16>()
@@ -4512,7 +4825,7 @@ pub mod build {
         #[derive(Debug)]
         pub struct Infiniband {
             /// Flags to identify/manage InfiniBand elements.
-            pub resource_flags: crate::proto::device_path::messaging::InfinibandResourceFlags,
+            pub resource_flags: device_path::messaging::InfinibandResourceFlags,
             /// 128-bit Global Identifier for remote fabric port. Note that
             /// this is not the same as a UEFI GUID.
             pub port_gid: [u8; 16usize],
@@ -4535,17 +4848,17 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_INFINIBAND,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_INFINIBAND,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
-                        .cast::<crate::proto::device_path::messaging::InfinibandResourceFlags>()
+                        .cast::<device_path::messaging::InfinibandResourceFlags>()
                         .write_unaligned(self.resource_flags);
                     out_ptr
                         .add(8usize)
@@ -4575,9 +4888,9 @@ pub mod build {
             /// Number of data bits, or 0 to use the device's default.
             pub data_bits: u8,
             /// Parity setting.
-            pub parity: crate::proto::device_path::messaging::Parity,
+            pub parity: device_path::messaging::Parity,
             /// Number of stop bits.
-            pub stop_bits: crate::proto::device_path::messaging::StopBits,
+            pub stop_bits: device_path::messaging::StopBits,
         }
 
         unsafe impl BuildNode for Uart {
@@ -4590,14 +4903,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_UART,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_UART,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr.add(4usize).write_bytes(0, size_of::<u32>());
                     out_ptr
                         .add(8usize)
@@ -4609,11 +4922,11 @@ pub mod build {
                         .write_unaligned(self.data_bits);
                     out_ptr
                         .add(17usize)
-                        .cast::<crate::proto::device_path::messaging::Parity>()
+                        .cast::<device_path::messaging::Parity>()
                         .write_unaligned(self.parity);
                     out_ptr
                         .add(18usize)
-                        .cast::<crate::proto::device_path::messaging::StopBits>()
+                        .cast::<device_path::messaging::StopBits>()
                         .write_unaligned(self.stop_bits);
                 }
             }
@@ -4628,7 +4941,7 @@ pub mod build {
             pub vendor_defined_data: &'a [u8],
         }
 
-        unsafe impl<'a> BuildNode for Vendor<'a> {
+        unsafe impl BuildNode for Vendor<'_> {
             fn size_in_bytes(&self) -> Result<u16, BuildError> {
                 let size = 20usize + size_of_val(self.vendor_defined_data);
                 u16::try_from(size).map_err(|_| BuildError::NodeTooBig)
@@ -4638,14 +4951,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_VENDOR,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_VENDOR,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<Guid>()
@@ -4684,14 +4997,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_SCSI_SAS_EX,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_SCSI_SAS_EX,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<[u8; 8usize]>()
@@ -4716,9 +5029,9 @@ pub mod build {
         #[derive(Debug)]
         pub struct Iscsi<'a> {
             /// Network protocol.
-            pub protocol: crate::proto::device_path::messaging::IscsiProtocol,
+            pub protocol: device_path::messaging::IscsiProtocol,
             /// iSCSI login options (bitfield).
-            pub options: crate::proto::device_path::messaging::IscsiLoginOptions,
+            pub options: device_path::messaging::IscsiLoginOptions,
             /// iSCSI Logical Unit Number.
             pub logical_unit_number: [u8; 8usize],
             /// iSCSI Target Portal group tag the initiator intends to
@@ -4732,7 +5045,7 @@ pub mod build {
             pub iscsi_target_name: &'a [u8],
         }
 
-        unsafe impl<'a> BuildNode for Iscsi<'a> {
+        unsafe impl BuildNode for Iscsi<'_> {
             fn size_in_bytes(&self) -> Result<u16, BuildError> {
                 let size = 18usize + size_of_val(self.iscsi_target_name);
                 u16::try_from(size).map_err(|_| BuildError::NodeTooBig)
@@ -4742,21 +5055,21 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_ISCSI,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_ISCSI,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
-                        .cast::<crate::proto::device_path::messaging::IscsiProtocol>()
+                        .cast::<device_path::messaging::IscsiProtocol>()
                         .write_unaligned(self.protocol);
                     out_ptr
                         .add(6usize)
-                        .cast::<crate::proto::device_path::messaging::IscsiLoginOptions>()
+                        .cast::<device_path::messaging::IscsiLoginOptions>()
                         .write_unaligned(self.options);
                     out_ptr
                         .add(8usize)
@@ -4798,14 +5111,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_NVME_NAMESPACE,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_NVME_NAMESPACE,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<u32>()
@@ -4825,7 +5138,7 @@ pub mod build {
             pub value: &'a [u8],
         }
 
-        unsafe impl<'a> BuildNode for Uri<'a> {
+        unsafe impl BuildNode for Uri<'_> {
             fn size_in_bytes(&self) -> Result<u16, BuildError> {
                 let size = 4usize + size_of_val(self.value);
                 u16::try_from(size).map_err(|_| BuildError::NodeTooBig)
@@ -4835,14 +5148,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_URI,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_URI,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     self.value
                         .as_ptr()
                         .cast::<u8>()
@@ -4870,14 +5183,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_UFS,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_UFS,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<u8>()
@@ -4907,14 +5220,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_SD,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_SD,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<u8>()
@@ -4940,14 +5253,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_BLUETOOTH,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_BLUETOOTH,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<[u8; 6usize]>()
@@ -4973,14 +5286,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_WIFI,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_WIFI,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<[u8; 32usize]>()
@@ -5006,14 +5319,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_EMMC,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_EMMC,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<u8>()
@@ -5028,7 +5341,7 @@ pub mod build {
             /// 48-bit bluetooth device address.
             pub device_address: [u8; 6usize],
             /// Address type.
-            pub address_type: crate::proto::device_path::messaging::BluetoothLeAddressType,
+            pub address_type: device_path::messaging::BluetoothLeAddressType,
         }
 
         unsafe impl BuildNode for BluetoothLe {
@@ -5041,21 +5354,21 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_BLUETOOTH_LE,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_BLUETOOTH_LE,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<[u8; 6usize]>()
                         .write_unaligned(self.device_address);
                     out_ptr
                         .add(10usize)
-                        .cast::<crate::proto::device_path::messaging::BluetoothLeAddressType>()
+                        .cast::<device_path::messaging::BluetoothLeAddressType>()
                         .write_unaligned(self.address_type);
                 }
             }
@@ -5065,12 +5378,12 @@ pub mod build {
         #[derive(Debug)]
         pub struct Dns<'a> {
             /// Whether the addresses are IPv4 or IPv6.
-            pub address_type: crate::proto::device_path::messaging::DnsAddressType,
+            pub address_type: device_path::messaging::DnsAddressType,
             /// One or more instances of the DNS server address.
             pub addresses: &'a [IpAddress],
         }
 
-        unsafe impl<'a> BuildNode for Dns<'a> {
+        unsafe impl BuildNode for Dns<'_> {
             fn size_in_bytes(&self) -> Result<u16, BuildError> {
                 let size = 5usize + size_of_val(self.addresses);
                 u16::try_from(size).map_err(|_| BuildError::NodeTooBig)
@@ -5080,17 +5393,17 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_DNS,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_DNS,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
-                        .cast::<crate::proto::device_path::messaging::DnsAddressType>()
+                        .cast::<device_path::messaging::DnsAddressType>()
                         .write_unaligned(self.address_type);
                     self.addresses
                         .as_ptr()
@@ -5117,14 +5430,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_NVDIMM_NAMESPACE,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_NVDIMM_NAMESPACE,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<[u8; 16usize]>()
@@ -5137,16 +5450,16 @@ pub mod build {
         #[derive(Debug)]
         pub struct RestService<'a> {
             /// Type of REST service.
-            pub service_type: crate::proto::device_path::messaging::RestServiceType,
+            pub service_type: device_path::messaging::RestServiceType,
             /// Whether the service is in-band or out-of-band.
-            pub access_mode: crate::proto::device_path::messaging::RestServiceAccessMode,
+            pub access_mode: device_path::messaging::RestServiceAccessMode,
             /// Vendor-specific data. Only used if the service type is [`VENDOR`].
             ///
             /// [`VENDOR`]: uefi::proto::device_path::messaging::RestServiceType
             pub vendor_guid_and_data: Option<RestServiceVendorData<'a>>,
         }
 
-        unsafe impl<'a> BuildNode for RestService<'a> {
+        unsafe impl BuildNode for RestService<'_> {
             fn size_in_bytes(&self) -> Result<u16, BuildError> {
                 let size = 6usize + self.build_size_vendor_guid_and_data();
                 u16::try_from(size).map_err(|_| BuildError::NodeTooBig)
@@ -5156,21 +5469,21 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_REST_SERVICE,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_REST_SERVICE,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
-                        .cast::<crate::proto::device_path::messaging::RestServiceType>()
+                        .cast::<device_path::messaging::RestServiceType>()
                         .write_unaligned(self.service_type);
                     out_ptr
                         .add(5usize)
-                        .cast::<crate::proto::device_path::messaging::RestServiceAccessMode>()
+                        .cast::<device_path::messaging::RestServiceAccessMode>()
                         .write_unaligned(self.access_mode);
                     self.build_vendor_guid_and_data(&mut out[6usize..])
                 }
@@ -5189,7 +5502,7 @@ pub mod build {
             pub subsystem_nqn: &'a [u8],
         }
 
-        unsafe impl<'a> BuildNode for NvmeOfNamespace<'a> {
+        unsafe impl BuildNode for NvmeOfNamespace<'_> {
             fn size_in_bytes(&self) -> Result<u16, BuildError> {
                 let size = 21usize + size_of_val(self.subsystem_nqn);
                 u16::try_from(size).map_err(|_| BuildError::NodeTooBig)
@@ -5199,14 +5512,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MESSAGING,
+                    DeviceSubType::MESSAGING_NVME_OF_NAMESPACE,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MESSAGING,
-                            sub_type: DeviceSubType::MESSAGING_NVME_OF_NAMESPACE,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr.add(4usize).cast::<u8>().write_unaligned(self.nidt);
                     out_ptr
                         .add(5usize)
@@ -5234,13 +5547,10 @@ pub mod build {
             pub vendor_defined_data: &'a [u8],
         }
 
-        impl<'a> RestService<'a> {
+        impl RestService<'_> {
             fn build_size_vendor_guid_and_data(&self) -> usize {
                 if let Some(src) = &self.vendor_guid_and_data {
-                    assert!(
-                        self.service_type
-                            == crate::proto::device_path::messaging::RestServiceType::VENDOR
-                    );
+                    assert!(self.service_type == device_path::messaging::RestServiceType::VENDOR);
                     size_of::<Guid>() + size_of_val(src.vendor_defined_data)
                 } else {
                     0
@@ -5249,10 +5559,7 @@ pub mod build {
 
             fn build_vendor_guid_and_data(&self, out: &mut [MaybeUninit<u8>]) {
                 if let Some(src) = &self.vendor_guid_and_data {
-                    assert!(
-                        self.service_type
-                            == crate::proto::device_path::messaging::RestServiceType::VENDOR
-                    );
+                    assert!(self.service_type == device_path::messaging::RestServiceType::VENDOR);
                     let (guid_out, data_out) = out.split_at_mut(size_of::<Guid>());
                     let guid_out_ptr: *mut Guid = maybe_uninit_slice_as_mut_ptr(guid_out).cast();
                     unsafe {
@@ -5283,9 +5590,9 @@ pub mod build {
             /// Size of the partition in blocks.
             pub partition_size: u64,
             /// Partition signature.
-            pub partition_signature: crate::proto::device_path::media::PartitionSignature,
+            pub partition_signature: device_path::media::PartitionSignature,
             /// Partition format.
-            pub partition_format: crate::proto::device_path::media::PartitionFormat,
+            pub partition_format: device_path::media::PartitionFormat,
         }
 
         unsafe impl BuildNode for HardDrive {
@@ -5298,14 +5605,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MEDIA,
+                    DeviceSubType::MEDIA_HARD_DRIVE,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MEDIA,
-                            sub_type: DeviceSubType::MEDIA_HARD_DRIVE,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<u32>()
@@ -5324,7 +5631,7 @@ pub mod build {
                         .write_unaligned(self.build_partition_signature());
                     out_ptr
                         .add(40usize)
-                        .cast::<crate::proto::device_path::media::PartitionFormat>()
+                        .cast::<device_path::media::PartitionFormat>()
                         .write_unaligned(self.partition_format);
                     out_ptr
                         .add(41usize)
@@ -5356,14 +5663,11 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header =
+                    DevicePathHeader::new(DeviceType::MEDIA, DeviceSubType::MEDIA_CD_ROM, length);
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MEDIA,
-                            sub_type: DeviceSubType::MEDIA_CD_ROM,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<u32>()
@@ -5389,7 +5693,7 @@ pub mod build {
             pub vendor_defined_data: &'a [u8],
         }
 
-        unsafe impl<'a> BuildNode for Vendor<'a> {
+        unsafe impl BuildNode for Vendor<'_> {
             fn size_in_bytes(&self) -> Result<u16, BuildError> {
                 let size = 20usize + size_of_val(self.vendor_defined_data);
                 u16::try_from(size).map_err(|_| BuildError::NodeTooBig)
@@ -5399,14 +5703,11 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header =
+                    DevicePathHeader::new(DeviceType::MEDIA, DeviceSubType::MEDIA_VENDOR, length);
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MEDIA,
-                            sub_type: DeviceSubType::MEDIA_VENDOR,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<Guid>()
@@ -5429,7 +5730,7 @@ pub mod build {
             pub path_name: &'a CStr16,
         }
 
-        unsafe impl<'a> BuildNode for FilePath<'a> {
+        unsafe impl BuildNode for FilePath<'_> {
             fn size_in_bytes(&self) -> Result<u16, BuildError> {
                 let size = 4usize + size_of_val(self.path_name);
                 u16::try_from(size).map_err(|_| BuildError::NodeTooBig)
@@ -5439,14 +5740,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MEDIA,
+                    DeviceSubType::MEDIA_FILE_PATH,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MEDIA,
-                            sub_type: DeviceSubType::MEDIA_FILE_PATH,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     self.path_name
                         .as_ptr()
                         .cast::<u8>()
@@ -5472,14 +5773,11 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header =
+                    DevicePathHeader::new(DeviceType::MEDIA, DeviceSubType::MEDIA_PROTOCOL, length);
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MEDIA,
-                            sub_type: DeviceSubType::MEDIA_PROTOCOL,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<Guid>()
@@ -5495,7 +5793,7 @@ pub mod build {
             pub data: &'a [u8],
         }
 
-        unsafe impl<'a> BuildNode for PiwgFirmwareFile<'a> {
+        unsafe impl BuildNode for PiwgFirmwareFile<'_> {
             fn size_in_bytes(&self) -> Result<u16, BuildError> {
                 let size = 4usize + size_of_val(self.data);
                 u16::try_from(size).map_err(|_| BuildError::NodeTooBig)
@@ -5505,14 +5803,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MEDIA,
+                    DeviceSubType::MEDIA_PIWG_FIRMWARE_FILE,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MEDIA,
-                            sub_type: DeviceSubType::MEDIA_PIWG_FIRMWARE_FILE,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     self.data
                         .as_ptr()
                         .cast::<u8>()
@@ -5528,7 +5826,7 @@ pub mod build {
             pub data: &'a [u8],
         }
 
-        unsafe impl<'a> BuildNode for PiwgFirmwareVolume<'a> {
+        unsafe impl BuildNode for PiwgFirmwareVolume<'_> {
             fn size_in_bytes(&self) -> Result<u16, BuildError> {
                 let size = 4usize + size_of_val(self.data);
                 u16::try_from(size).map_err(|_| BuildError::NodeTooBig)
@@ -5538,14 +5836,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MEDIA,
+                    DeviceSubType::MEDIA_PIWG_FIRMWARE_VOLUME,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MEDIA,
-                            sub_type: DeviceSubType::MEDIA_PIWG_FIRMWARE_VOLUME,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     self.data
                         .as_ptr()
                         .cast::<u8>()
@@ -5573,14 +5871,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::MEDIA,
+                    DeviceSubType::MEDIA_RELATIVE_OFFSET_RANGE,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MEDIA,
-                            sub_type: DeviceSubType::MEDIA_RELATIVE_OFFSET_RANGE,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr.add(4usize).write_bytes(0, size_of::<u32>());
                     out_ptr
                         .add(8usize)
@@ -5602,7 +5900,7 @@ pub mod build {
             /// Ending memory address.
             pub ending_address: u64,
             /// Type of RAM disk.
-            pub disk_type: crate::proto::device_path::media::RamDiskType,
+            pub disk_type: device_path::media::RamDiskType,
             /// RAM disk instance number if supported, otherwise 0.
             pub disk_instance: u16,
         }
@@ -5617,14 +5915,11 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header =
+                    DevicePathHeader::new(DeviceType::MEDIA, DeviceSubType::MEDIA_RAM_DISK, length);
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::MEDIA,
-                            sub_type: DeviceSubType::MEDIA_RAM_DISK,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<u64>()
@@ -5635,7 +5930,7 @@ pub mod build {
                         .write_unaligned(self.ending_address);
                     out_ptr
                         .add(20usize)
-                        .cast::<crate::proto::device_path::media::RamDiskType>()
+                        .cast::<device_path::media::RamDiskType>()
                         .write_unaligned(self.disk_type);
                     out_ptr
                         .add(36usize)
@@ -5647,7 +5942,7 @@ pub mod build {
 
         impl HardDrive {
             fn build_partition_signature(&self) -> [u8; 16] {
-                use crate::proto::device_path::media::PartitionSignature::*;
+                use device_path::media::PartitionSignature::*;
                 match self.partition_signature {
                     None => [0u8; 16],
                     Mbr(mbr) => {
@@ -5662,7 +5957,7 @@ pub mod build {
             }
 
             fn build_signature_type(&self) -> u8 {
-                use crate::proto::device_path::media::PartitionSignature::*;
+                use device_path::media::PartitionSignature::*;
                 match self.partition_signature {
                     None => 0,
                     Mbr(_) => 1,
@@ -5688,7 +5983,7 @@ pub mod build {
             pub description_string: &'a [u8],
         }
 
-        unsafe impl<'a> BuildNode for BootSpecification<'a> {
+        unsafe impl BuildNode for BootSpecification<'_> {
             fn size_in_bytes(&self) -> Result<u16, BuildError> {
                 let size = 8usize + size_of_val(self.description_string);
                 u16::try_from(size).map_err(|_| BuildError::NodeTooBig)
@@ -5698,14 +5993,14 @@ pub mod build {
                 let size = usize::from(self.size_in_bytes().unwrap());
                 assert_eq!(size, out.len());
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::BIOS_BOOT_SPEC,
+                    DeviceSubType::BIOS_BOOT_SPECIFICATION,
+                    length,
+                );
                 unsafe {
-                    out_ptr
-                        .cast::<DevicePathHeader>()
-                        .write_unaligned(DevicePathHeader {
-                            device_type: DeviceType::BIOS_BOOT_SPEC,
-                            sub_type: DeviceSubType::BIOS_BOOT_SPECIFICATION,
-                            length: u16::try_from(size).unwrap(),
-                        });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     out_ptr
                         .add(4usize)
                         .cast::<u16>()

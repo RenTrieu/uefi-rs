@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // See the README in this directory for details of what this file is.
 //
 // The nodes here are in the same order as in the UEFI Specification.
@@ -5,13 +7,13 @@
 mod end {
     /// Node that terminates a [`DevicePathInstance`].
     ///
-    /// [`DevicePathInstance`]: crate::proto::device_path::DevicePathInstance
+    /// [`DevicePathInstance`]: device_path::DevicePathInstance
     #[node(static_size = 4)]
     struct Instance;
 
     /// Node that terminates an entire [`DevicePath`].
     ///
-    /// [`DevicePath`]: crate::proto::device_path::DevicePath
+    /// [`DevicePath`]: device_path::DevicePath
     #[node(static_size = 4)]
     struct Entire;
 }
@@ -69,7 +71,7 @@ mod hardware {
     #[node(static_size = 13)]
     struct Bmc {
         /// Host interface type.
-        interface_type: crate::proto::device_path::hardware::BmcInterfaceType,
+        interface_type: device_path::hardware::BmcInterfaceType,
 
         /// Base address of the BMC. If the least-significant bit of the
         /// field is a 1 then the address is in I/O space, otherwise the
@@ -324,10 +326,10 @@ mod messaging {
     #[node(static_size = 8)]
     struct Atapi {
         /// Whether the ATAPI device is primary or secondary.
-        primary_secondary: crate::proto::device_path::messaging::PrimarySecondary,
+        primary_secondary: device_path::messaging::PrimarySecondary,
 
         /// Whether the ATAPI device is master or slave.
-        master_slave: crate::proto::device_path::messaging::MasterSlave,
+        master_slave: device_path::messaging::MasterSlave,
 
         /// Logical Unit Number (LUN).
         logical_unit_number: u16,
@@ -503,7 +505,7 @@ mod messaging {
         protocol: u16,
 
         /// Whether the source IP address is static or assigned via DHCP.
-        ip_address_origin: crate::proto::device_path::messaging::Ipv4AddressOrigin,
+        ip_address_origin: device_path::messaging::Ipv4AddressOrigin,
 
         /// Gateway IP address.
         gateway_ip_address: [u8; 4],
@@ -543,7 +545,7 @@ mod messaging {
         protocol: u16,
 
         /// Origin of the local IP address.
-        ip_address_origin: crate::proto::device_path::messaging::Ipv6AddressOrigin,
+        ip_address_origin: device_path::messaging::Ipv6AddressOrigin,
 
         /// Prefix length.
         prefix_length: u8,
@@ -579,7 +581,7 @@ mod messaging {
     #[node(static_size = 48)]
     struct Infiniband {
         /// Flags to identify/manage InfiniBand elements.
-        resource_flags: crate::proto::device_path::messaging::InfinibandResourceFlags,
+        resource_flags: device_path::messaging::InfinibandResourceFlags,
 
         /// 128-bit Global Identifier for remote fabric port. Note that
         /// this is not the same as a UEFI GUID.
@@ -630,10 +632,10 @@ mod messaging {
         data_bits: u8,
 
         /// Parity setting.
-        parity: crate::proto::device_path::messaging::Parity,
+        parity: device_path::messaging::Parity,
 
         /// Number of stop bits.
-        stop_bits: crate::proto::device_path::messaging::StopBits,
+        stop_bits: device_path::messaging::StopBits,
     }
 
     newtype_enum! {
@@ -686,6 +688,20 @@ mod messaging {
         vendor_defined_data: [u8],
     }
 
+    impl Vendor {
+        /// PC-ANSI terminal GUID.
+        pub const PC_ANSI: Guid = guid!("e0c14753-f9be-11d2-9a0c-0090273fc14d");
+
+        /// VT-100 terminal GUID.
+        pub const VT_100: Guid = guid!("dfa66065-b419-11d3-9a2d-0090273fc14d");
+
+        /// VT-100+ terminal GUID.
+        pub const VT_100_PLUS: Guid = guid!("7baec70b-57e0-4c76-8e87-2f9e28088343");
+
+        /// VT-UTF8 terminal GUID.
+        pub const VT_UTF8: Guid = guid!("ad15a0d6-8bec-4acf-a073-d01de77e2d88");
+    }
+
     // The spec defines a couple specific messaging-vendor types here,
     // one for UART and one for SAS. These are sort of subclasses of
     // `messaging::Vendor` so they don't quite fit the usual pattern of
@@ -713,10 +729,10 @@ mod messaging {
     #[node(static_size = 18)]
     struct Iscsi {
         /// Network protocol.
-        protocol: crate::proto::device_path::messaging::IscsiProtocol,
+        protocol: device_path::messaging::IscsiProtocol,
 
         /// iSCSI login options (bitfield).
-        options: crate::proto::device_path::messaging::IscsiLoginOptions,
+        options: device_path::messaging::IscsiLoginOptions,
 
         /// iSCSI Logical Unit Number.
         logical_unit_number: [u8; 8],
@@ -824,7 +840,7 @@ mod messaging {
         device_address: [u8; 6],
 
         /// Address type.
-        address_type: crate::proto::device_path::messaging::BluetoothLeAddressType,
+        address_type: device_path::messaging::BluetoothLeAddressType,
     }
 
     newtype_enum! {
@@ -842,7 +858,7 @@ mod messaging {
     #[node(static_size = 5)]
     struct Dns {
         /// Whether the addresses are IPv4 or IPv6.
-        address_type: crate::proto::device_path::messaging::DnsAddressType,
+        address_type: device_path::messaging::DnsAddressType,
 
         /// One or more instances of the DNS server address.
         addresses: [IpAddress],
@@ -878,10 +894,10 @@ mod messaging {
     #[node(static_size = 6)]
     struct RestService {
         /// Type of REST service.
-        service_type: crate::proto::device_path::messaging::RestServiceType,
+        service_type: device_path::messaging::RestServiceType,
 
         /// Whether the service is in-band or out-of-band.
-        access_mode: crate::proto::device_path::messaging::RestServiceAccessMode,
+        access_mode: device_path::messaging::RestServiceAccessMode,
 
         /// Vendor-specific data. Only used if the service type is [`VENDOR`].
         ///
@@ -954,13 +970,10 @@ mod messaging {
     }
 
     #[build]
-    impl<'a> RestService<'a> {
+    impl RestService<'_> {
         fn build_size_vendor_guid_and_data(&self) -> usize {
             if let Some(src) = &self.vendor_guid_and_data {
-                assert!(
-                    self.service_type
-                        == crate::proto::device_path::messaging::RestServiceType::VENDOR
-                );
+                assert!(self.service_type == device_path::messaging::RestServiceType::VENDOR);
 
                 size_of::<Guid>() + size_of_val(src.vendor_defined_data)
             } else {
@@ -970,10 +983,7 @@ mod messaging {
 
         fn build_vendor_guid_and_data(&self, out: &mut [MaybeUninit<u8>]) {
             if let Some(src) = &self.vendor_guid_and_data {
-                assert!(
-                    self.service_type
-                        == crate::proto::device_path::messaging::RestServiceType::VENDOR
-                );
+                assert!(self.service_type == device_path::messaging::RestServiceType::VENDOR);
 
                 let (guid_out, data_out) = out.split_at_mut(size_of::<Guid>());
 
@@ -1025,12 +1035,12 @@ mod media {
         #[node(
             no_get_func,
             custom_build_impl,
-            build_type = "crate::proto::device_path::media::PartitionSignature"
+            build_type = "device_path::media::PartitionSignature"
         )]
         partition_signature: [u8; 16],
 
         /// Partition format.
-        partition_format: crate::proto::device_path::media::PartitionFormat,
+        partition_format: device_path::media::PartitionFormat,
 
         #[node(no_get_func, custom_build_impl, build_type = false)]
         signature_type: u8,
@@ -1060,7 +1070,7 @@ mod media {
     #[build]
     impl HardDrive {
         fn build_partition_signature(&self) -> [u8; 16] {
-            use crate::proto::device_path::media::PartitionSignature::*;
+            use device_path::media::PartitionSignature::*;
             match self.partition_signature {
                 None => [0u8; 16],
                 Mbr(mbr) => {
@@ -1074,7 +1084,7 @@ mod media {
         }
 
         fn build_signature_type(&self) -> u8 {
-            use crate::proto::device_path::media::PartitionSignature::*;
+            use device_path::media::PartitionSignature::*;
             match self.partition_signature {
                 None => 0,
                 Mbr(_) => 1,
@@ -1191,7 +1201,7 @@ mod media {
         ending_address: u64,
 
         /// Type of RAM disk.
-        disk_type: crate::proto::device_path::media::RamDiskType,
+        disk_type: device_path::media::RamDiskType,
 
         /// RAM disk instance number if supported, otherwise 0.
         disk_instance: u16,

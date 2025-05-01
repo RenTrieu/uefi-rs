@@ -1,41 +1,51 @@
-use uefi::prelude::*;
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
+use uefi::boot::{self, OpenProtocolParams};
 use uefi::proto::loaded_image::LoadedImage;
 use uefi::{proto, Identify};
 
-pub fn test(image: Handle, st: &mut SystemTable<Boot>) {
+pub fn test() {
     info!("Testing various protocols");
 
-    console::test(image, st);
+    console::test();
 
-    let bt = st.boot_services();
-    find_protocol(bt);
-    test_protocols_per_handle(image, bt);
+    find_protocol();
+    test_protocols_per_handle();
+    test_test_protocol();
 
-    debug::test(bt);
-    device_path::test(image, bt);
-    driver::test(bt);
-    loaded_image::test(image, bt);
-    media::test(bt);
-    network::test(bt);
-    pi::test(bt);
-    rng::test(bt);
-    string::test(bt);
+    debug::test();
+    device_path::test();
+    driver::test();
+    load::test();
+    loaded_image::test();
+    media::test();
+    network::test();
+    pi::test();
+    rng::test();
+    shell_params::test();
+    string::test();
+    misc::test();
+
+    // disable the ATA test on aarch64 for now. The aarch64 UEFI Firmware does not yet seem
+    // to support SATA controllers (and providing an AtaPassThru protocol instance for them).
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    ata::test();
+    scsi::test();
+    nvme::test();
 
     #[cfg(any(
-        target_arch = "i386",
+        target_arch = "x86",
         target_arch = "x86_64",
         target_arch = "arm",
         target_arch = "aarch64"
     ))]
-    shim::test(bt);
-    shell::test(bt);
-    tcg::test(bt);
+    shim::test();
+    shell::test();
+    tcg::test();
 }
 
-fn find_protocol(bt: &BootServices) {
-    let handles = bt
-        .find_handles::<proto::console::text::Output>()
+fn find_protocol() {
+    let handles = boot::find_handles::<proto::console::text::Output>()
         .expect("Failed to retrieve list of handles");
 
     assert!(
@@ -44,28 +54,40 @@ fn find_protocol(bt: &BootServices) {
     );
 }
 
-fn test_protocols_per_handle(image: Handle, bt: &BootServices) {
-    let pph = bt
-        .protocols_per_handle(image)
-        .expect("Failed to get protocols for image handle");
-
+fn test_protocols_per_handle() {
+    let pph = boot::protocols_per_handle(boot::image_handle()).unwrap();
     info!("Image handle has {} protocols", pph.len());
-
     // Check that one of the image's protocols is `LoadedImage`.
     assert!(pph.iter().any(|guid| **guid == LoadedImage::GUID));
 }
 
+fn test_test_protocol() {
+    assert!(boot::test_protocol::<LoadedImage>(OpenProtocolParams {
+        handle: boot::image_handle(),
+        agent: boot::image_handle(),
+        controller: None,
+    })
+    .unwrap());
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+mod ata;
 mod console;
 mod debug;
 mod device_path;
 mod driver;
+mod load;
 mod loaded_image;
 mod media;
+mod misc;
 mod network;
+mod nvme;
 mod pi;
 mod rng;
+mod scsi;
+mod shell_params;
 #[cfg(any(
-    target_arch = "i386",
+    target_arch = "x86",
     target_arch = "x86_64",
     target_arch = "arm",
     target_arch = "aarch64"

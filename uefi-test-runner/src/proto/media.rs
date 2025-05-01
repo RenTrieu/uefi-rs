@@ -1,19 +1,25 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use alloc::string::ToString;
 use core::cell::RefCell;
 use core::ptr::NonNull;
+use uefi::boot::{
+    self, EventType, OpenProtocolAttributes, OpenProtocolParams, ScopedProtocol, Tpl,
+};
 use uefi::data_types::Align;
 use uefi::prelude::*;
 use uefi::proto::media::block::BlockIO;
 use uefi::proto::media::disk::{DiskIo, DiskIo2, DiskIo2Token};
+use uefi::proto::media::disk_info::{DiskInfo, DiskInfoInterface};
 use uefi::proto::media::file::{
     Directory, File, FileAttribute, FileInfo, FileMode, FileSystemInfo, FileSystemVolumeLabel,
 };
 use uefi::proto::media::fs::SimpleFileSystem;
 use uefi::proto::media::partition::{MbrOsType, PartitionInfo};
-use uefi::table::boot::{
-    EventType, OpenProtocolAttributes, OpenProtocolParams, ScopedProtocol, Tpl,
-};
-use uefi::table::runtime::{Daylight, Time, TimeParams};
+use uefi::runtime::{Daylight, Time, TimeParams};
+
+#[repr(align(8))]
+struct AlignedBuf([u8; 256]);
 
 /// Test directory entry iteration.
 fn test_existing_dir(directory: &mut Directory) {
@@ -31,11 +37,9 @@ fn test_existing_dir(directory: &mut Directory) {
     let dir = RefCell::new(dir);
 
     assert_eq!(FileInfo::alignment(), 8);
-    #[repr(align(8))]
-    struct Buf([u8; 200]);
 
     // Backing memory to read the file info data into.
-    let mut stack_buf = Buf([0; 200]);
+    let mut stack_buf = AlignedBuf([0; 256]);
 
     // The file names that the test read from the directory.
     let entry_names = RefCell::new(vec![]);
@@ -127,7 +131,7 @@ fn test_existing_file(directory: &mut Directory) {
     let mut info_buffer = vec![0; 128];
     let info = file.get_info::<FileInfo>(&mut info_buffer).unwrap();
     assert_eq!(info.file_size(), 15);
-    assert_eq!(info.physical_size(), 512);
+    assert_eq!(info.physical_size(), 1024);
     let tp = TimeParams {
         year: 2000,
         month: 1,
@@ -244,34 +248,32 @@ fn test_create_directory(root_dir: &mut Directory) {
 }
 
 /// Get the media ID via the BlockIO protocol.
-fn get_block_media_id(handle: Handle, bt: &BootServices) -> u32 {
+fn get_block_media_id(handle: Handle) -> u32 {
     // This cannot be opened in `EXCLUSIVE` mode, as doing so
     // unregisters the `DiskIO` protocol from the handle.
     unsafe {
-        let block_io = bt
-            .open_protocol::<BlockIO>(
-                OpenProtocolParams {
-                    handle,
-                    agent: bt.image_handle(),
-                    controller: None,
-                },
-                OpenProtocolAttributes::GetProtocol,
-            )
-            .expect("Failed to get block I/O protocol");
+        let block_io = boot::open_protocol::<BlockIO>(
+            OpenProtocolParams {
+                handle,
+                agent: boot::image_handle(),
+                controller: None,
+            },
+            OpenProtocolAttributes::GetProtocol,
+        )
+        .expect("Failed to get block I/O protocol");
         block_io.media().media_id()
     }
 }
 
 /// Tests raw disk I/O.
-fn test_raw_disk_io(handle: Handle, bt: &BootServices) {
+fn test_raw_disk_io(handle: Handle) {
     info!("Testing raw disk I/O");
 
-    let media_id = get_block_media_id(handle, bt);
+    let media_id = get_block_media_id(handle);
 
     // Open the disk I/O protocol on the input handle
-    let disk_io = bt
-        .open_protocol_exclusive::<DiskIo>(handle)
-        .expect("Failed to get disk I/O protocol");
+    let disk_io =
+        boot::open_protocol_exclusive::<DiskIo>(handle).expect("Failed to get disk I/O protocol");
 
     // Read from the first sector of the disk into the buffer
     let mut buf = vec![0; 512];
@@ -296,17 +298,16 @@ struct DiskIoTask {
 }
 
 /// Tests raw disk I/O through the DiskIo2 protocol.
-fn test_raw_disk_io2(handle: Handle, bt: &BootServices) {
+fn test_raw_disk_io2(handle: Handle) {
     info!("Testing raw disk I/O 2");
 
     // Open the disk I/O protocol on the input handle
-    if let Ok(disk_io2) = bt.open_protocol_exclusive::<DiskIo2>(handle) {
-        let media_id = get_block_media_id(handle, bt);
+    if let Ok(disk_io2) = boot::open_protocol_exclusive::<DiskIo2>(handle) {
+        let media_id = get_block_media_id(handle);
 
         unsafe {
             // Create the completion event
-            let mut event = bt
-                .create_event(EventType::empty(), Tpl::NOTIFY, None, None)
+            let mut event = boot::create_event(EventType::empty(), Tpl::NOTIFY, None, None)
                 .expect("Failed to create disk I/O completion event");
 
             // Initialise the task context
@@ -330,7 +331,7 @@ fn test_raw_disk_io2(handle: Handle, bt: &BootServices) {
                 .expect("Failed to initiate asynchronous disk I/O read");
 
             // Wait for the transaction to complete
-            bt.wait_for_event(core::slice::from_mut(&mut event))
+            boot::wait_for_event(core::slice::from_mut(&mut event))
                 .expect("Failed to wait on completion event");
 
             // Verify that the disk's MBR signature is correct
@@ -343,10 +344,41 @@ fn test_raw_disk_io2(handle: Handle, bt: &BootServices) {
     }
 }
 
+fn test_disk_info() {
+    let disk_handles = uefi::boot::find_handles::<DiskInfo>().unwrap();
+
+    let mut found_drive = false;
+    for handle in disk_handles {
+        let disk_info = uefi::boot::open_protocol_exclusive::<DiskInfo>(handle).unwrap();
+        info!(
+            "DiskInfo at: {:?} (interface= {:?})",
+            handle,
+            disk_info.interface()
+        );
+        // Find our disk
+        if disk_info.interface() != DiskInfoInterface::SCSI {
+            continue;
+        }
+        let mut inquiry_bfr = [0; 128];
+        let Ok(len) = disk_info.inquiry(&mut inquiry_bfr) else {
+            continue;
+        };
+        // SCSI Spec states: The standard INQUIRY data (see table 59) shall contain at least 36 bytes
+        assert!(len >= 36);
+        let vendor_id = core::str::from_utf8(&inquiry_bfr[8..16]).unwrap().trim();
+        let product_id = core::str::from_utf8(&inquiry_bfr[16..32]).unwrap().trim();
+        if vendor_id == "uefi-rs" && product_id == "ExtScsiPassThru" {
+            info!("Found Testdisk at Handle: {:?}", handle);
+            found_drive = true;
+        }
+    }
+
+    assert!(found_drive);
+}
+
 /// Check that `disk_handle` points to the expected MBR partition.
-fn test_partition_info(bt: &BootServices, disk_handle: Handle) {
-    let pi = bt
-        .open_protocol_exclusive::<PartitionInfo>(disk_handle)
+fn test_partition_info(disk_handle: Handle) {
+    let pi = boot::open_protocol_exclusive::<PartitionInfo>(disk_handle)
         .expect("Failed to get partition info");
 
     let mbr = pi.mbr_partition_record().expect("Not an MBR disk");
@@ -355,7 +387,7 @@ fn test_partition_info(bt: &BootServices, disk_handle: Handle) {
 
     assert_eq!(mbr.boot_indicator, 0);
     assert_eq!({ mbr.starting_lba }, 1);
-    assert_eq!({ mbr.size_in_lba }, 1233);
+    assert_eq!({ mbr.size_in_lba }, 20479);
     assert_eq!({ mbr.starting_chs }, [0, 0, 0]);
     assert_eq!(mbr.ending_chs, [0, 0, 0]);
     assert_eq!(mbr.os_type, MbrOsType(6));
@@ -363,15 +395,21 @@ fn test_partition_info(bt: &BootServices, disk_handle: Handle) {
 
 /// Find the disk with the "MbrTestDisk" label. Return the handle and opened
 /// `SimpleFileSystem` protocol for that disk.
-fn find_test_disk(bt: &BootServices) -> (Handle, ScopedProtocol<SimpleFileSystem>) {
-    let handles = bt
-        .find_handles::<SimpleFileSystem>()
+fn find_test_disk() -> (Handle, ScopedProtocol<SimpleFileSystem>) {
+    let handles = boot::find_handles::<SimpleFileSystem>()
         .expect("Failed to get handles for `SimpleFileSystem` protocol");
+
+    // This branch is due to the qemu machine type we use based on the architecture.
+    // - *Q35* by default uses a SATA-Controller to connect disks.
+    // - *virt* by default uses virtio to connect disks.
+    // The aarch64 UEFI Firmware does not yet seem to support SATA-Controllers.
+    #[cfg(any(target_arch = "arm", target_arch = "aarch64"))]
     assert_eq!(handles.len(), 2);
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    assert_eq!(handles.len(), 3);
 
     for handle in handles {
-        let mut sfs = bt
-            .open_protocol_exclusive::<SimpleFileSystem>(handle)
+        let mut sfs = boot::open_protocol_exclusive::<SimpleFileSystem>(handle)
             .expect("Failed to get simple file system");
         let mut root_directory = sfs.open_volume().unwrap();
 
@@ -389,8 +427,8 @@ fn find_test_disk(bt: &BootServices) -> (Handle, ScopedProtocol<SimpleFileSystem
 
 /// Run various file-system related tests on a special test disk. The disk is created by
 /// `xtask/src/disk.rs`.
-pub fn test(bt: &BootServices) {
-    let (handle, mut sfs) = find_test_disk(bt);
+pub fn test() {
+    let (handle, mut sfs) = find_test_disk();
 
     {
         let mut root_directory = sfs.open_volume().unwrap();
@@ -412,9 +450,9 @@ pub fn test(bt: &BootServices) {
             .unwrap();
 
         assert!(!fs_info.read_only());
-        assert_eq!(fs_info.volume_size(), 512 * 1192);
-        assert_eq!(fs_info.free_space(), 512 * 1190);
-        assert_eq!(fs_info.block_size(), 512);
+        assert_eq!(fs_info.volume_size(), 1024 * 10183);
+        assert_eq!(fs_info.free_space(), 1024 * 10181);
+        assert_eq!(fs_info.block_size(), 1024);
         assert_eq!(fs_info.volume_label().to_string(), "MbrTestDisk");
 
         // Check that `get_boxed_info` returns the same info.
@@ -435,7 +473,7 @@ pub fn test(bt: &BootServices) {
         test_create_file(&mut root_directory);
         test_create_directory(&mut root_directory);
 
-        test_partition_info(bt, handle);
+        test_partition_info(handle);
     }
 
     // Invoke the fs test after the basic low-level file system protocol
@@ -445,6 +483,7 @@ pub fn test(bt: &BootServices) {
     // tests work.
     crate::fs::test(sfs).unwrap();
 
-    test_raw_disk_io(handle, bt);
-    test_raw_disk_io2(handle, bt);
+    test_raw_disk_io(handle);
+    test_raw_disk_io2(handle);
+    test_disk_info();
 }

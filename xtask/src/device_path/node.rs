@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use super::field::NodeField;
 use super::group::DeviceType;
 use crate::device_path::util::is_doc_attr;
@@ -98,6 +100,36 @@ impl Node {
         size
     }
 
+    /// Generate struct for uefi-raw.
+    pub fn gen_raw_struct(&self) -> TokenStream {
+        let struct_ident = &self.struct_ident;
+
+        let mut fields = vec![quote!(header: DevicePathHeader)];
+        fields.extend(self.fields.iter().filter_map(|field| {
+            // For a DST group, all the slice fields will be added as
+            // one `data` slice below.
+            if field.is_slice() && self.has_dst_group() {
+                return None;
+            }
+
+            let field_name = &field.name;
+            let field_ty = field.raw_ty();
+            Some(quote!(#field_name: #field_ty))
+        }));
+
+        // Combined `data` field for a DST group.
+        if self.has_dst_group() {
+            fields.push(quote!(data: [u8; 0]));
+        }
+
+        quote!(
+            #[repr(C, packed)]
+            pub struct #struct_ident {
+                #(pub #fields),*
+            }
+        )
+    }
+
     fn gen_packed_struct(&self) -> TokenStream {
         let struct_docs = &self.docs;
         let struct_ident = &self.struct_ident;
@@ -178,7 +210,7 @@ impl Node {
                     // slice instead.
                     quote!({
                         let ptr = addr_of!(#field_val);
-                        let (ptr, len) = PtrExt::to_raw_parts(ptr);
+                        let (ptr, len) = ptr_meta::to_raw_parts(ptr);
                         let byte_len = size_of::<#slice_elem_ty>() * len;
                         unsafe { &slice::from_raw_parts(ptr.cast::<u8>(), byte_len) }
                     })
@@ -238,11 +270,19 @@ impl Node {
             )
         };
 
+        let device_type = &self.device_type.const_ident();
+        let sub_type = &self.sub_type;
+
         quote!(
             impl TryFrom<&DevicePathNode> for &#struct_ident {
                 type Error = NodeConversionError;
 
                 fn try_from(node: &DevicePathNode) -> Result<Self, Self::Error> {
+                    if node.device_type() != DeviceType::#device_type ||
+                        node.sub_type() != DeviceSubType::#sub_type {
+                        return Err(NodeConversionError::DifferentType);
+                    }
+
                     #try_from_body
 
                     // Safety: the node fields have all been verified to
@@ -433,12 +473,14 @@ impl Node {
                 assert_eq!(size, out.len());
 
                 let out_ptr: *mut u8 = maybe_uninit_slice_as_mut_ptr(out);
+                let length = u16::try_from(size).unwrap();
+                let header = DevicePathHeader::new(
+                    DeviceType::#device_type,
+                    DeviceSubType::#sub_type,
+                    length,
+                );
                 unsafe {
-                    out_ptr.cast::<DevicePathHeader>().write_unaligned(DevicePathHeader {
-                        device_type: DeviceType::#device_type,
-                        sub_type: DeviceSubType::#sub_type,
-                        length: u16::try_from(size).unwrap(),
-                    });
+                    out_ptr.cast::<DevicePathHeader>().write_unaligned(header);
                     #(#copy_stmts)*
                 }
             }
@@ -447,13 +489,17 @@ impl Node {
 
     fn gen_builder_impl(&self) -> TokenStream {
         let struct_ident = &self.struct_ident;
-        let lifetime = self.builder_lifetime();
+        let lifetime = if self.is_dst() {
+            Some(quote!(<'_>))
+        } else {
+            None
+        };
 
         let size_in_bytes_method = self.gen_builder_size_in_bytes_method();
         let write_data_method = self.gen_builder_write_data_method();
 
         quote!(
-            unsafe impl #lifetime BuildNode for #struct_ident #lifetime {
+            unsafe impl BuildNode for #struct_ident #lifetime {
                 #size_in_bytes_method
 
                 #write_data_method

@@ -1,43 +1,48 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use alloc::string::ToString;
+use uefi::boot::{LoadImageSource, SearchType};
+use uefi::fs::FileSystem;
 use uefi::proto::console::text::Output;
 use uefi::proto::device_path::media::FilePath;
 use uefi::proto::device_path::{DevicePath, LoadedImageDevicePath};
-use uefi::table::boot::{BootServices, LoadImageSource, SearchType};
-use uefi::table::{Boot, SystemTable};
-use uefi::{CString16, Identify};
+use uefi::proto::BootPolicy;
+use uefi::{boot, CString16, Identify};
 
 mod memory;
 mod misc;
 
-pub fn test(st: &SystemTable<Boot>) {
-    let bt = st.boot_services();
+pub fn test() {
     info!("Testing boot services");
-    memory::test(bt);
-    misc::test(st);
-    test_locate_handle_buffer(bt);
-    test_load_image(bt);
+    memory::test();
+    misc::test();
+    test_locate_handles();
+    test_load_image();
 }
 
-fn test_locate_handle_buffer(bt: &BootServices) {
-    info!("Testing the `locate_handle_buffer` function");
+fn test_locate_handles() {
+    info!("Testing the `locate_handle_buffer`/`find_handles` functions");
 
     {
         // search all handles
-        let handles = bt
-            .locate_handle_buffer(SearchType::AllHandles)
+        let handles = boot::locate_handle_buffer(SearchType::AllHandles)
             .expect("Failed to locate handle buffer");
         assert!(!handles.is_empty(), "Could not find any handles");
     }
 
     {
         // search by protocol
-        let handles = bt
-            .locate_handle_buffer(SearchType::ByProtocol(&Output::GUID))
+        let handles = boot::locate_handle_buffer(SearchType::ByProtocol(&Output::GUID))
             .expect("Failed to locate handle buffer");
         assert!(
             !handles.is_empty(),
             "Could not find any OUTPUT protocol handles"
         );
+
+        // Compare with `boot::find_handles`. This implicitly tests
+        // `boot::locate_handle` as well.
+        let handles_vec = boot::find_handles::<Output>().unwrap();
+        assert_eq!(*handles, handles_vec);
     }
 }
 
@@ -46,15 +51,15 @@ fn test_locate_handle_buffer(bt: &BootServices) {
 ///
 /// It transitively tests the protocol [`LoadedImageDevicePath`] which is
 /// required as helper.
-fn test_load_image(bt: &BootServices) {
+fn test_load_image() {
     /// The path of the loaded image executing this integration test.
     const LOADED_IMAGE_PATH: &str = r"\EFI\BOOT\TEST_RUNNER.EFI";
 
     info!("Testing the `load_image` function");
 
-    let image_device_path_protocol = bt
-        .open_protocol_exclusive::<LoadedImageDevicePath>(bt.image_handle())
-        .expect("should open LoadedImage protocol");
+    let image_device_path_protocol =
+        boot::open_protocol_exclusive::<LoadedImageDevicePath>(boot::image_handle())
+            .expect("should open LoadedImage protocol");
 
     // Note: This is the full device path. The LoadedImage protocol would only
     // provide us with the file-path portion of the device path.
@@ -76,37 +81,35 @@ fn test_load_image(bt: &BootServices) {
 
     // Variant A: FromBuffer
     {
-        let mut fs = bt
-            .get_image_file_system(bt.image_handle())
-            .expect("should open file system");
+        let fs =
+            boot::get_image_file_system(boot::image_handle()).expect("should open file system");
         let path = CString16::try_from(image_device_path_file_path.as_str()).unwrap();
-        let image_data = fs.read(&*path).expect("should read file content");
+        let image_data = FileSystem::new(fs)
+            .read(&*path)
+            .expect("should read file content");
         let load_source = LoadImageSource::FromBuffer {
             buffer: image_data.as_slice(),
             file_path: None,
         };
-        let loaded_image = bt
-            .load_image(bt.image_handle(), load_source)
-            .expect("should load image");
+        let loaded_image =
+            boot::load_image(boot::image_handle(), load_source).expect("should load image");
 
         log::debug!("load_image with FromBuffer strategy works");
 
         // Check that the `LoadedImageDevicePath` protocol can be opened and
         // that the interface data is `None`.
-        let loaded_image_device_path = bt
-            .open_protocol_exclusive::<LoadedImageDevicePath>(loaded_image)
-            .expect("should open LoadedImageDevicePath protocol");
+        let loaded_image_device_path =
+            boot::open_protocol_exclusive::<LoadedImageDevicePath>(loaded_image)
+                .expect("should open LoadedImageDevicePath protocol");
         assert!(loaded_image_device_path.get().is_none());
     }
     // Variant B: FromDevicePath
     {
         let load_source = LoadImageSource::FromDevicePath {
             device_path: image_device_path,
-            from_boot_manager: false,
+            boot_policy: BootPolicy::ExactMatch,
         };
-        let _ = bt
-            .load_image(bt.image_handle(), load_source)
-            .expect("should load image");
+        let _ = boot::load_image(boot::image_handle(), load_source).expect("should load image");
 
         log::debug!("load_image with FromFilePath strategy works");
     }

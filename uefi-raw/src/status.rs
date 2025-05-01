@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use core::fmt::Debug;
 
 newtype_enum! {
@@ -98,20 +100,20 @@ pub enum Status: usize => {
 
 impl Status {
     /// Bit indicating that an UEFI status code is an error.
-    pub const ERROR_BIT: usize = 1 << (core::mem::size_of::<usize>() * 8 - 1);
+    pub const ERROR_BIT: usize = 1 << (usize::BITS - 1);
 
     /// Returns true if status code indicates success.
     #[inline]
     #[must_use]
     pub fn is_success(self) -> bool {
-        self == Status::SUCCESS
+        self == Self::SUCCESS
     }
 
     /// Returns true if status code indicates a warning.
     #[inline]
     #[must_use]
     pub fn is_warning(self) -> bool {
-        (self != Status::SUCCESS) && (self.0 & Self::ERROR_BIT == 0)
+        (self != Self::SUCCESS) && (self.0 & Self::ERROR_BIT == 0)
     }
 
     /// Returns true if the status code indicates an error.

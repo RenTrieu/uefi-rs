@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `Rng` protocol.
 
 use crate::{guid, Guid, Status};
@@ -33,6 +35,7 @@ newtype_enum! {
 }
 
 /// Rng protocol.
+#[derive(Debug)]
 #[repr(C)]
 pub struct RngProtocol {
     pub get_info: unsafe extern "efiapi" fn(

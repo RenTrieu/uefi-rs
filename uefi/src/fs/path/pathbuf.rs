@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use crate::fs::path::Path;
 use crate::fs::SEPARATOR;
 use crate::{CStr16, CString16, Char16};
@@ -120,8 +122,8 @@ mod convenience_impls {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cstr16;
     use alloc::string::ToString;
-    use uefi_macros::cstr16;
 
     #[test]
     fn from_cstr16() {

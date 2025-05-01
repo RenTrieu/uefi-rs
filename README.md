@@ -1,70 +1,54 @@
 # uefi-rs
 
+Rusty wrapper for the [Unified Extensible Firmware Interface][UEFI].
+
+This crate makes it easy to develop Rust software that leverages **safe**,
+**convenient**, and **performant** abstractions for [UEFI] functionality.
+
 [![Crates.io](https://img.shields.io/crates/v/uefi)](https://crates.io/crates/uefi)
 [![Docs.rs](https://docs.rs/uefi/badge.svg)](https://docs.rs/uefi)
-![Stars](https://img.shields.io/github/stars/rust-osdev/uefi-rs)
 ![License](https://img.shields.io/github/license/rust-osdev/uefi-rs)
 ![Build status](https://github.com/rust-osdev/uefi-rs/workflows/Rust/badge.svg)
+![Stars](https://img.shields.io/github/stars/rust-osdev/uefi-rs)
 
-## Description
+![UEFI App running in QEMU](https://imgur.com/SFPSVuO.png)
+Screenshot of an application running in QEMU on an UEFI firmware that leverages
+our Rust library.
 
-[UEFI] is the successor to the BIOS. It provides an early boot environment for
-OS loaders, hypervisors and other low-level applications. While it started out
-as x86-specific, it has been adopted on other platforms, such as ARM.
+## API and User Documentation
+<!-- This section is duplicated with uefi/README.md -->
 
-This crate makes it easy to both:
-  - Write UEFI applications in Rust (for `i686`, `x86_64`, or `aarch64`)
-  - Call UEFI functions from an OS (usually built with a [custom target][rustc-custom])
+The main contribution of this project is the [`uefi` crate](./uefi/README.md).
+Please refer to [docs.rs](https://docs.rs/uefi) for comprehensive documentation
+of the **latest stable release**. The latest not necessarily yet published
+documentation can be found in [`src/lib.rs`](./uefi/src/lib.rs), which can also
+be locally viewed by running `$ cargo xtask doc --open`.
 
-The objective is to provide **safe** and **performant** wrappers for UEFI interfaces,
-and allow developers to write idiomatic Rust code.
+## Developer Guide
 
-Check out [the UEFI application template](template) for a quick start.
+### Repository Structure
 
-[UEFI]: https://en.wikipedia.org/wiki/Unified_Extensible_Firmware_Interface
-[rustc-custom]: https://doc.rust-lang.org/rustc/targets/custom.html
+This repository provides various crates:
 
-![uefi-rs running in QEMU](https://imgur.com/SFPSVuO.png)
+- [`uefi`](/uefi/README.md): High-level wrapper around various low-level UEFI
+  APIs. This crate makes it easy to develop Rust software that leverages safe,
+  convenient, and performant abstractions for UEFI functionality.
+  This is the **main contribution** of this project.
+- [`uefi-raw`](/uefi-raw/README.md): Raw ABI-compatible types that closely
+  match the definitions in the UEFI Specification. They are suitable for
+  implementing UEFI firmware or creating interfaces to it.
+- [`uefi-macros`](/uefi-macros/README.md): Helper macros used by `uefi`.
+- [`uefi-test-runner`](/uefi-test-runner/README.md): A UEFI application that
+  runs our integration tests.
+- [`uefi-std-example`](/uefi-std-example/README.md): Example UEFI app but as
+  Rust standard binary.
 
-## Project structure
-
-This project contains multiple sub-crates:
-
-- `uefi`: defines the standard UEFI tables / interfaces.
-  The objective is to stay unopinionated and safely wrap most interfaces.
-
-- `uefi-macros`: procedural macros that are used to derive some traits in `uefi`.
-
-- `uefi-raw`: raw types that closely match the definitions in the UEFI
-  Specification. Safe wrappers for these types are provided by the `uefi`
-  crate. The raw types are suitable for implementing UEFI firmware.
-
-- `uefi-services`: provides a panic handler, and initializes the `alloc` / `logger` features.
-
-- `uefi-test-runner`: a UEFI application that runs unit / integration tests.
-
-[log]: https://github.com/rust-lang-nursery/log
-
-## Documentation
-
-The [uefi-rs book] contains a tutorial, how-tos, and overviews of some
-important UEFI concepts.
-
-Reference documentation can be found on docs.rs:
-- [docs.rs/uefi](https://docs.rs/uefi)
-- [docs.rs/uefi-macros](https://docs.rs/uefi-macros)
-- [docs.rs/uefi-services](https://docs.rs/uefi-services)
-
-For additional information, refer to the [UEFI specification][spec].
-
-[spec]: http://www.uefi.org/specifications
-[uefi-rs book]: https://rust-osdev.github.io/uefi-rs/HEAD
-
-## Building and testing uefi-rs
+### Building and testing uefi-rs
 
 Use the `cargo xtask` command to build and test the crate.
 
 Available commands:
+
 - `build`: build all the UEFI packages
   - `--release`: build in release mode
   - `--target {x86_64,ia32,aarch64}`: choose target UEFI arch
@@ -76,9 +60,10 @@ Available commands:
   - `--warnings-as-errors`: treat warnings as errors
 - `run`: build `uefi-test-runner` and run it in QEMU
   - `--ci`: disable some tests that don't work in the CI
-  - `--disable-kvm`: disable hardware accelerated virtualization support in QEMU.
-                     Especially useful if you want to run the tests under
-                     [WSL](https://docs.microsoft.com/en-us/windows/wsl) on Windows.
+  - `--disable-kvm`: disable hardware accelerated virtualization support in
+    QEMU.
+    Especially useful if you want to run the tests under
+    [WSL](https://docs.microsoft.com/en-us/windows/wsl) on Windows.
   - `--example <NAME>`: run an example instead of the main binary.
   - `--headless`: run QEMU without a GUI
   - `--ovmf-code <PATH>`: path of an OVMF code file
@@ -93,18 +78,21 @@ most of the library's functionality.
 Check out the testing project's [`README.md`](uefi-test-runner/README.md) for
 prerequisites for running the tests.
 
-## MSRV
+## Discuss and Contribute
 
-See the [uefi package's README](uefi/README.md#MSRV).
+For general discussions, feel free to join us in our [Zulip] and ask
+your questions there.
 
-## Contributing
-
-We welcome issues and pull requests! For instructions on how to set up a development
-environment and how to add new protocols, check out [CONTRIBUTING.md](CONTRIBUTING.md).
+Further, you can submit bugs and also ask questions in our [issue tracker].
+Contributions in the form of a PR are also highly welcome. Check our
+[contributing guide](./CONTRIBUTING.md) for details.
 
 ## License
 
-The code in this repository is licensed under the Mozilla Public License 2.
-This license allows you to use the crate in proprietary programs, but any modifications to the files must be open-sourced.
+Licensed under either of [Apache License, Version 2.0][apache] or
+[MIT license][mit] at your option.
 
-The full text of the license is available in the [license file](LICENSE).
+[apache]: LICENSE-APACHE
+[mit]: LICENSE-MIT
+[UEFI]: https://en.wikipedia.org/wiki/Unified_Extensible_Firmware_Interface
+[Zulip]: https://rust-osdev.zulipchat.com

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // ANCHOR: all
 #![no_main]
 #![no_std]
@@ -6,12 +8,10 @@ extern crate alloc;
 
 use alloc::vec;
 use alloc::vec::Vec;
-use core::mem;
 use uefi::prelude::*;
 use uefi::proto::console::gop::{BltOp, BltPixel, BltRegion, GraphicsOutput};
 use uefi::proto::rng::Rng;
-use uefi::table::boot::BootServices;
-use uefi::Result;
+use uefi::{boot, Result};
 
 #[derive(Clone, Copy)]
 struct Point {
@@ -56,24 +56,41 @@ impl Buffer {
             dims: (self.width, self.height),
         })
     }
+
+    /// Update only a pixel to the framebuffer.
+    fn blit_pixel(
+        &self,
+        gop: &mut GraphicsOutput,
+        coords: (usize, usize),
+    ) -> Result {
+        gop.blt(BltOp::BufferToVideo {
+            buffer: &self.pixels,
+            src: BltRegion::SubRectangle {
+                coords,
+                px_stride: self.width,
+            },
+            dest: coords,
+            dims: (1, 1),
+        })
+    }
 }
 // ANCHOR_END: buffer
 
 /// Get a random `usize` value.
 fn get_random_usize(rng: &mut Rng) -> usize {
-    let mut buf = [0; mem::size_of::<usize>()];
+    let mut buf = [0; size_of::<usize>()];
     rng.get_rng(None, &mut buf).expect("get_rng failed");
     usize::from_le_bytes(buf)
 }
 
-fn draw_sierpinski(bt: &BootServices) -> Result {
+fn draw_sierpinski() -> Result {
     // Open graphics output protocol.
-    let gop_handle = bt.get_handle_for_protocol::<GraphicsOutput>()?;
-    let mut gop = bt.open_protocol_exclusive::<GraphicsOutput>(gop_handle)?;
+    let gop_handle = boot::get_handle_for_protocol::<GraphicsOutput>()?;
+    let mut gop = boot::open_protocol_exclusive::<GraphicsOutput>(gop_handle)?;
 
     // Open random number generator protocol.
-    let rng_handle = bt.get_handle_for_protocol::<Rng>()?;
-    let mut rng = bt.open_protocol_exclusive::<Rng>(rng_handle)?;
+    let rng_handle = boot::get_handle_for_protocol::<Rng>()?;
+    let mut rng = boot::open_protocol_exclusive::<Rng>(rng_handle)?;
 
     // Create a buffer to draw into.
     let (width, height) = gop.current_mode_info().resolution();
@@ -90,6 +107,9 @@ fn draw_sierpinski(bt: &BootServices) -> Result {
             pixel.blue = 255;
         }
     }
+
+    // Draw background.
+    buffer.blit(&mut gop)?;
 
     let size = Point::new(width as f32, height as f32);
 
@@ -120,15 +140,14 @@ fn draw_sierpinski(bt: &BootServices) -> Result {
         pixel.blue = 0;
 
         // Draw the buffer to the screen.
-        buffer.blit(&mut gop)?;
+        buffer.blit_pixel(&mut gop, (p.x as usize, p.y as usize))?;
     }
 }
 
 #[entry]
-fn main(_handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
-    uefi_services::init(&mut system_table).unwrap();
-    let bt = system_table.boot_services();
-    draw_sierpinski(bt).unwrap();
+fn main() -> Status {
+    uefi::helpers::init().unwrap();
+    draw_sierpinski().unwrap();
     Status::SUCCESS
 }
 // ANCHOR_END: all

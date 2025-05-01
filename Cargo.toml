@@ -5,7 +5,7 @@ members = [
     "uefi",
     "uefi-macros",
     "uefi-raw",
-    "uefi-services",
+    "uefi-std-example",
     "uefi-test-runner",
     "xtask",
 ]
@@ -15,15 +15,21 @@ authors = ["The Rust OSDev team"]
 categories = ["embedded", "no-std", "api-bindings"]
 edition = "2021"
 keywords = ["uefi", "efi"]
-license = "MPL-2.0"
+license = "MIT OR Apache-2.0"
 repository = "https://github.com/rust-osdev/uefi-rs"
-rust-version = "1.68"
+rust-version = "1.81"
+
+[workspace.dependencies]
+bitflags = "2.0.0"
+log = { version = "0.4.5", default-features = false }
+ptr_meta = { version = "0.3.0", default-features = false, features = ["derive"] }
+# Pinned to keep uefi-raw's MSRV.
+uguid = "=2.2.0"
 
 [patch.crates-io]
 uefi = { path = "uefi" }
 uefi-macros = { path = "uefi-macros" }
 uefi-raw = { path = "uefi-raw" }
-uefi-services = { path = "uefi-services" }
 
 # Enable optimization for xtask itself, not for its dependencies. This speeds up
 # OVMF prebuilt decompression without much increase in compilation time.

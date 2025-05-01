@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Configuration table utilities.
 //!
 //! The configuration table is an array of GUIDs and pointers to extra system tables.
@@ -14,7 +16,7 @@ use core::ffi::c_void;
 /// Contains a set of GUID / pointer for a vendor-specific table.
 ///
 /// The UEFI standard guarantees each entry is unique.
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[repr(C)]
 pub struct ConfigTableEntry {
     /// The GUID identifying this table.

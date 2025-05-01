@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Path validation for the purpose of the [`fs`] module. This is decoupled from
 //! [`Path`] and [`PathBuf`], as the Rust standard library also does it this
 //! way. Instead, the FS implementation is responsible for that.
@@ -38,7 +40,6 @@ impl Display for PathError {
     }
 }
 
-#[cfg(feature = "unstable")]
 impl core::error::Error for PathError {}
 
 /// Validates a path for the needs of the [`fs`] module.
@@ -67,8 +68,7 @@ pub fn validate_path<P: AsRef<Path>>(path: P) -> Result<(), PathError> {
 mod tests {
     use super::*;
     use crate::fs::PathBuf;
-    use crate::CString16;
-    use uefi_macros::cstr16;
+    use crate::{cstr16, CString16};
 
     #[test]
     fn test_validate_path() {

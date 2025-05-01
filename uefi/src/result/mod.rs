@@ -1,14 +1,16 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Facilities for dealing with UEFI operation results.
 
 use core::fmt::Debug;
 
 /// The error type that we use, essentially a status code + optional additional data
 mod error;
-pub use self::error::Error;
+pub use error::Error;
 
 /// Definition of UEFI's standard status codes
 mod status;
-pub use self::status::{Status, StatusExt};
+pub use status::{Status, StatusExt};
 
 /// Return type of most UEFI functions. Both success and error payloads are optional.
 ///
@@ -80,9 +82,9 @@ impl<Output, ErrData: Debug> ResultExt<Output, ErrData> for Result<Output, ErrDa
         }
     }
 
-    fn handle_warning<O>(self, op: O) -> Result<Output, ErrData>
+    fn handle_warning<O>(self, op: O) -> Self
     where
-        O: FnOnce(Error<ErrData>) -> Result<Output, ErrData>,
+        O: FnOnce(Error<ErrData>) -> Self,
     {
         match self {
             Ok(output) => Ok(output),

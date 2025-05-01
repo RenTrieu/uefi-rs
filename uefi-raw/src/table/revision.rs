@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use core::fmt;
 
 /// A revision of the UEFI specification.
@@ -61,7 +63,7 @@ impl Revision {
         let major = major as u32;
         let minor = minor as u32;
         let value = (major << 16) | minor;
-        Revision(value)
+        Self(value)
     }
 
     /// Returns the major revision.

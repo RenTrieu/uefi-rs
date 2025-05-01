@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Device Path protocol
 //!
 //! A UEFI device path is a very flexible structure for encoding a
@@ -75,26 +77,33 @@
 
 pub mod build;
 pub mod text;
+pub mod util;
 
 mod device_path_gen;
+
 pub use device_path_gen::{
     acpi, bios_boot_spec, end, hardware, media, messaging, DevicePathNodeEnum,
 };
+pub use uefi_raw::protocol::device_path::{DeviceSubType, DeviceType};
 
+use crate::mem::PoolAllocation;
+use crate::proto::{unsafe_protocol, ProtocolPointer};
 use core::ffi::c_void;
 use core::fmt::{self, Debug, Display, Formatter};
-use core::mem;
 use core::ops::Deref;
 use ptr_meta::Pointee;
-use uefi::table::boot::ScopedProtocol;
-#[cfg(feature = "alloc")]
-use {alloc::borrow::ToOwned, alloc::boxed::Box, uefi::CString16};
 
-use crate::prelude::BootServices;
-use crate::proto::device_path::text::{AllowShortcuts, DevicePathToText, DisplayOnly};
-use crate::proto::{unsafe_protocol, ProtocolPointer};
-use crate::table::boot::{OpenProtocolAttributes, OpenProtocolParams, SearchType};
-use crate::Identify;
+use uefi_raw::protocol::device_path::DevicePathProtocol;
+#[cfg(feature = "alloc")]
+use {
+    crate::boot::{self, OpenProtocolAttributes, OpenProtocolParams, ScopedProtocol, SearchType},
+    crate::proto::device_path::text::{AllowShortcuts, DevicePathToText, DisplayOnly},
+    crate::proto::device_path::util::DevicePathUtilities,
+    crate::{CString16, Identify},
+    alloc::borrow::ToOwned,
+    alloc::boxed::Box,
+    core::mem,
+};
 
 opaque_type! {
     /// Opaque type that should be used to represent a pointer to a
@@ -104,16 +113,77 @@ opaque_type! {
     pub struct FfiDevicePath;
 }
 
-/// Header that appears at the start of every [`DevicePathNode`].
+/// Device path allocated from UEFI pool memory.
+#[derive(Debug)]
+pub struct PoolDevicePath(pub(crate) PoolAllocation);
+
+impl Deref for PoolDevicePath {
+    type Target = DevicePath;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { DevicePath::from_ffi_ptr(self.0.as_ptr().as_ptr().cast()) }
+    }
+}
+
+/// Device path node allocated from UEFI pool memory.
+#[derive(Debug)]
+pub struct PoolDevicePathNode(pub(crate) PoolAllocation);
+
+impl Deref for PoolDevicePathNode {
+    type Target = DevicePathNode;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { DevicePathNode::from_ffi_ptr(self.0.as_ptr().as_ptr().cast()) }
+    }
+}
+
+/// Fixed header that appears at the start of every [`DevicePathNode`].
+///
+/// This type is ABI-compatible with `EFI_DEVICE_PATH_PROTOCOL`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(C, packed)]
-pub struct DevicePathHeader {
-    /// Type of device
-    pub device_type: DeviceType,
-    /// Sub type of device
-    pub sub_type: DeviceSubType,
-    /// Size (in bytes) of the [`DevicePathNode`], including this header.
-    pub length: u16,
+#[repr(transparent)]
+pub struct DevicePathHeader(DevicePathProtocol);
+
+impl DevicePathHeader {
+    /// Constructs a new [`DevicePathHeader`].
+    #[must_use]
+    pub const fn new(major_type: DeviceType, sub_type: DeviceSubType, length: u16) -> Self {
+        Self(DevicePathProtocol {
+            major_type,
+            sub_type,
+            length: length.to_le_bytes(),
+        })
+    }
+
+    /// Returns the [`DeviceType`].
+    #[must_use]
+    pub const fn device_type(&self) -> DeviceType {
+        self.0.major_type
+    }
+
+    /// Returns the [`DeviceSubType`].
+    #[must_use]
+    pub const fn sub_type(&self) -> DeviceSubType {
+        self.0.sub_type
+    }
+
+    /// Returns the total length of the device path node.
+    #[must_use]
+    pub const fn length(&self) -> u16 {
+        self.0.length()
+    }
+}
+
+impl<'a> TryFrom<&'a [u8]> for &'a DevicePathHeader {
+    type Error = ByteConversionError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        if size_of::<DevicePathHeader>() <= bytes.len() {
+            unsafe { Ok(&*bytes.as_ptr().cast::<DevicePathHeader>()) }
+        } else {
+            Err(ByteConversionError::InvalidLength)
+        }
+    }
 }
 
 /// A single node within a [`DevicePath`].
@@ -156,11 +226,11 @@ impl DevicePathNode {
     /// remain valid for the lifetime `'a`, and cannot be mutated during
     /// that lifetime.
     #[must_use]
-    pub unsafe fn from_ffi_ptr<'a>(ptr: *const FfiDevicePath) -> &'a DevicePathNode {
-        let header = *ptr.cast::<DevicePathHeader>();
+    pub unsafe fn from_ffi_ptr<'a>(ptr: *const FfiDevicePath) -> &'a Self {
+        let header = unsafe { *ptr.cast::<DevicePathHeader>() };
 
-        let data_len = usize::from(header.length) - mem::size_of::<DevicePathHeader>();
-        &*ptr_meta::from_raw_parts(ptr.cast(), data_len)
+        let data_len = usize::from(header.length()) - size_of::<DevicePathHeader>();
+        unsafe { &*ptr_meta::from_raw_parts(ptr.cast(), data_len) }
     }
 
     /// Cast to a [`FfiDevicePath`] pointer.
@@ -173,25 +243,25 @@ impl DevicePathNode {
     /// Type of device
     #[must_use]
     pub const fn device_type(&self) -> DeviceType {
-        self.header.device_type
+        self.header.device_type()
     }
 
     /// Sub type of device
     #[must_use]
     pub const fn sub_type(&self) -> DeviceSubType {
-        self.header.sub_type
+        self.header.sub_type()
     }
 
     /// Tuple of the node's type and subtype.
     #[must_use]
     pub const fn full_type(&self) -> (DeviceType, DeviceSubType) {
-        (self.header.device_type, self.header.sub_type)
+        (self.device_type(), self.sub_type())
     }
 
     /// Size (in bytes) of the full [`DevicePathNode`], including the header.
     #[must_use]
     pub const fn length(&self) -> u16 {
-        self.header.length
+        self.header.length()
     }
 
     /// True if this node ends an entire [`DevicePath`].
@@ -202,7 +272,7 @@ impl DevicePathNode {
 
     /// Returns the payload data of this node.
     #[must_use]
-    pub fn data(&self) -> &[u8] {
+    pub const fn data(&self) -> &[u8] {
         &self.data
     }
 
@@ -214,27 +284,23 @@ impl DevicePathNode {
 
     /// Transforms the device path node to its string representation using the
     /// [`DevicePathToText`] protocol.
-    ///
-    /// The resulting string is only None, if there was not enough memory.
     #[cfg(feature = "alloc")]
     pub fn to_string(
         &self,
-        bs: &BootServices,
         display_only: DisplayOnly,
         allow_shortcuts: AllowShortcuts,
-    ) -> Result<Option<CString16>, DevicePathToTextError> {
-        let to_text_protocol = open_text_protocol(bs)?;
+    ) -> Result<CString16, DevicePathToTextError> {
+        let to_text_protocol = open_text_protocol()?;
 
-        let cstring16 = to_text_protocol
-            .convert_device_node_to_text(bs, self, display_only, allow_shortcuts)
-            .ok()
+        to_text_protocol
+            .convert_device_node_to_text(self, display_only, allow_shortcuts)
             .map(|pool_string| {
                 let cstr16 = &*pool_string;
                 // Another allocation; pool string is dropped. This overhead
                 // is negligible. CString16 is more convenient to use.
                 CString16::from(cstr16)
-            });
-        Ok(cstring16)
+            })
+            .map_err(|_| DevicePathToTextError::OutOfMemory)
     }
 }
 
@@ -250,6 +316,19 @@ impl Debug for DevicePathNode {
 impl PartialEq for DevicePathNode {
     fn eq(&self, other: &Self) -> bool {
         self.header == other.header && self.data == other.data
+    }
+}
+
+impl<'a> TryFrom<&'a [u8]> for &'a DevicePathNode {
+    type Error = ByteConversionError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        let dp = <&DevicePathHeader>::try_from(bytes)?;
+        if usize::from(dp.length()) <= bytes.len() {
+            unsafe { Ok(DevicePathNode::from_ffi_ptr(bytes.as_ptr().cast())) }
+        } else {
+            Err(ByteConversionError::InvalidLength)
+        }
     }
 }
 
@@ -314,7 +393,7 @@ impl PartialEq for DevicePathInstance {
 
 #[cfg(feature = "alloc")]
 impl ToOwned for DevicePathInstance {
-    type Owned = Box<DevicePathInstance>;
+    type Owned = Box<Self>;
 
     fn to_owned(&self) -> Self::Owned {
         self.to_boxed()
@@ -343,11 +422,11 @@ pub struct DevicePath {
 
 impl ProtocolPointer for DevicePath {
     unsafe fn ptr_from_ffi(ptr: *const c_void) -> *const Self {
-        ptr_meta::from_raw_parts(ptr.cast(), Self::size_in_bytes_from_ptr(ptr))
+        ptr_meta::from_raw_parts(ptr.cast(), unsafe { Self::size_in_bytes_from_ptr(ptr) })
     }
 
     unsafe fn mut_ptr_from_ffi(ptr: *mut c_void) -> *mut Self {
-        ptr_meta::from_raw_parts_mut(ptr.cast(), Self::size_in_bytes_from_ptr(ptr))
+        ptr_meta::from_raw_parts_mut(ptr.cast(), unsafe { Self::size_in_bytes_from_ptr(ptr) })
     }
 }
 
@@ -359,16 +438,45 @@ impl DevicePath {
         let mut ptr = ptr.cast::<u8>();
         let mut total_size_in_bytes: usize = 0;
         loop {
-            let node = DevicePathNode::from_ffi_ptr(ptr.cast::<FfiDevicePath>());
+            let node = unsafe { DevicePathNode::from_ffi_ptr(ptr.cast::<FfiDevicePath>()) };
             let node_size_in_bytes = usize::from(node.length());
             total_size_in_bytes += node_size_in_bytes;
             if node.is_end_entire() {
                 break;
             }
-            ptr = ptr.add(node_size_in_bytes);
+            ptr = unsafe { ptr.add(node_size_in_bytes) };
         }
 
         total_size_in_bytes
+    }
+
+    /// Calculate the size in bytes of the entire `DevicePath` starting
+    /// at `bytes`. This adds up each node's length, including the
+    /// end-entire node.
+    ///
+    /// # Errors
+    ///
+    /// The [`ByteConversionError::InvalidLength`] error will be returned
+    /// when the length of the given bytes slice cannot contain the full
+    /// [`DevicePath`] represented by the slice.
+    fn size_in_bytes_from_slice(mut bytes: &[u8]) -> Result<usize, ByteConversionError> {
+        let max_size_in_bytes = bytes.len();
+        let mut total_size_in_bytes: usize = 0;
+        loop {
+            let node = <&DevicePathNode>::try_from(bytes)?;
+            let node_size_in_bytes = usize::from(node.length());
+            total_size_in_bytes += node_size_in_bytes;
+            // Length of last processed node extends past the bytes slice.
+            if total_size_in_bytes > max_size_in_bytes {
+                return Err(ByteConversionError::InvalidLength);
+            }
+            if node.is_end_entire() {
+                break;
+            }
+            bytes = &bytes[node_size_in_bytes..];
+        }
+
+        Ok(total_size_in_bytes)
     }
 
     /// Create a [`DevicePath`] reference from an opaque pointer.
@@ -379,8 +487,8 @@ impl DevicePath {
     /// remain valid for the lifetime `'a`, and cannot be mutated during
     /// that lifetime.
     #[must_use]
-    pub unsafe fn from_ffi_ptr<'a>(ptr: *const FfiDevicePath) -> &'a DevicePath {
-        &*Self::ptr_from_ffi(ptr.cast::<c_void>())
+    pub unsafe fn from_ffi_ptr<'a>(ptr: *const FfiDevicePath) -> &'a Self {
+        unsafe { &*Self::ptr_from_ffi(ptr.cast::<c_void>()) }
     }
 
     /// Cast to a [`FfiDevicePath`] pointer.
@@ -427,27 +535,42 @@ impl DevicePath {
 
     /// Transforms the device path to its string representation using the
     /// [`DevicePathToText`] protocol.
-    ///
-    /// The resulting string is only None, if there was not enough memory.
     #[cfg(feature = "alloc")]
     pub fn to_string(
         &self,
-        bs: &BootServices,
         display_only: DisplayOnly,
         allow_shortcuts: AllowShortcuts,
-    ) -> Result<Option<CString16>, DevicePathToTextError> {
-        let to_text_protocol = open_text_protocol(bs)?;
+    ) -> Result<CString16, DevicePathToTextError> {
+        let to_text_protocol = open_text_protocol()?;
 
-        let cstring16 = to_text_protocol
-            .convert_device_path_to_text(bs, self, display_only, allow_shortcuts)
-            .ok()
+        to_text_protocol
+            .convert_device_path_to_text(self, display_only, allow_shortcuts)
             .map(|pool_string| {
                 let cstr16 = &*pool_string;
                 // Another allocation; pool string is dropped. This overhead
                 // is negligible. CString16 is more convenient to use.
                 CString16::from(cstr16)
-            });
-        Ok(cstring16)
+            })
+            .map_err(|_| DevicePathToTextError::OutOfMemory)
+    }
+
+    /// Allocates and returns a new [`DevicePath`] by copying this one and appending the given `right` path.
+    #[cfg(feature = "alloc")]
+    pub fn append_path(&self, right: &Self) -> Result<PoolDevicePath, DevicePathUtilitiesError> {
+        open_utility_protocol()?
+            .append_path(self, right)
+            .map_err(|_| DevicePathUtilitiesError::OutOfMemory)
+    }
+
+    /// Allocates and returns a new [`DevicePath`] by copying this one and appending the given `right` node.
+    #[cfg(feature = "alloc")]
+    pub fn append_node(
+        &self,
+        right: &DevicePathNode,
+    ) -> Result<PoolDevicePath, DevicePathUtilitiesError> {
+        open_utility_protocol()?
+            .append_node(self, right)
+            .map_err(|_| DevicePathUtilitiesError::OutOfMemory)
     }
 }
 
@@ -465,9 +588,18 @@ impl PartialEq for DevicePath {
     }
 }
 
+impl<'a> TryFrom<&'a [u8]> for &'a DevicePath {
+    type Error = ByteConversionError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        let len = DevicePath::size_in_bytes_from_slice(bytes)?;
+        unsafe { Ok(&*ptr_meta::from_raw_parts(bytes.as_ptr().cast(), len)) }
+    }
+}
+
 #[cfg(feature = "alloc")]
 impl ToOwned for DevicePath {
-    type Owned = Box<DevicePath>;
+    type Owned = Box<Self>;
 
     fn to_owned(&self) -> Self::Owned {
         self.to_boxed()
@@ -575,167 +707,21 @@ impl<'a> Iterator for DevicePathNodeIterator<'a> {
     }
 }
 
-newtype_enum! {
-/// Type identifier for a DevicePath
-pub enum DeviceType: u8 => {
-    /// Hardware Device Path.
-    ///
-    /// This Device Path defines how a device is attached to the resource domain of a system, where resource domain is
-    /// simply the shared memory, memory mapped I/ O, and I/O space of the system.
-    HARDWARE = 0x01,
-    /// ACPI Device Path.
-    ///
-    /// This Device Path is used to describe devices whose enumeration is not described in an industry-standard fashion.
-    /// These devices must be described using ACPI AML in the ACPI namespace; this Device Path is a linkage to the ACPI
-    /// namespace.
-    ACPI = 0x02,
-    /// Messaging Device Path.
-    ///
-    /// This Device Path is used to describe the connection of devices outside the resource domain of the system. This
-    /// Device Path can describe physical messaging information such as a SCSI ID, or abstract information such as
-    /// networking protocol IP addresses.
-    MESSAGING = 0x03,
-    /// Media Device Path.
-    ///
-    /// This Device Path is used to describe the portion of a medium that is being abstracted by a boot service.
-    /// For example, a Media Device Path could define which partition on a hard drive was being used.
-    MEDIA = 0x04,
-    /// BIOS Boot Specification Device Path.
-    ///
-    /// This Device Path is used to point to boot legacy operating systems; it is based on the BIOS Boot Specification
-    /// Version 1.01.
-    BIOS_BOOT_SPEC = 0x05,
-    /// End of Hardware Device Path.
-    ///
-    /// Depending on the Sub-Type, this Device Path node is used to indicate the end of the Device Path instance or
-    /// Device Path structure.
-    END = 0x7F,
-}}
-
-/// Sub-type identifier for a DevicePath
+/// Error returned when attempting to convert from a `&[u8]` to a
+/// [`DevicePath`] type.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DeviceSubType(pub u8);
-
-impl DeviceSubType {
-    /// PCI Device Path.
-    pub const HARDWARE_PCI: DeviceSubType = DeviceSubType(1);
-    /// PCCARD Device Path.
-    pub const HARDWARE_PCCARD: DeviceSubType = DeviceSubType(2);
-    /// Memory-mapped Device Path.
-    pub const HARDWARE_MEMORY_MAPPED: DeviceSubType = DeviceSubType(3);
-    /// Vendor-Defined Device Path.
-    pub const HARDWARE_VENDOR: DeviceSubType = DeviceSubType(4);
-    /// Controller Device Path.
-    pub const HARDWARE_CONTROLLER: DeviceSubType = DeviceSubType(5);
-    /// BMC Device Path.
-    pub const HARDWARE_BMC: DeviceSubType = DeviceSubType(6);
-
-    /// ACPI Device Path.
-    pub const ACPI: DeviceSubType = DeviceSubType(1);
-    /// Expanded ACPI Device Path.
-    pub const ACPI_EXPANDED: DeviceSubType = DeviceSubType(2);
-    /// ACPI _ADR Device Path.
-    pub const ACPI_ADR: DeviceSubType = DeviceSubType(3);
-    /// NVDIMM Device Path.
-    pub const ACPI_NVDIMM: DeviceSubType = DeviceSubType(4);
-
-    /// ATAPI Device Path.
-    pub const MESSAGING_ATAPI: DeviceSubType = DeviceSubType(1);
-    /// SCSI Device Path.
-    pub const MESSAGING_SCSI: DeviceSubType = DeviceSubType(2);
-    /// Fibre Channel Device Path.
-    pub const MESSAGING_FIBRE_CHANNEL: DeviceSubType = DeviceSubType(3);
-    /// 1394 Device Path.
-    pub const MESSAGING_1394: DeviceSubType = DeviceSubType(4);
-    /// USB Device Path.
-    pub const MESSAGING_USB: DeviceSubType = DeviceSubType(5);
-    /// I2O Device Path.
-    pub const MESSAGING_I2O: DeviceSubType = DeviceSubType(6);
-    /// Infiniband Device Path.
-    pub const MESSAGING_INFINIBAND: DeviceSubType = DeviceSubType(9);
-    /// Vendor-Defined Device Path.
-    pub const MESSAGING_VENDOR: DeviceSubType = DeviceSubType(10);
-    /// MAC Address Device Path.
-    pub const MESSAGING_MAC_ADDRESS: DeviceSubType = DeviceSubType(11);
-    /// IPV4 Device Path.
-    pub const MESSAGING_IPV4: DeviceSubType = DeviceSubType(12);
-    /// IPV6 Device Path.
-    pub const MESSAGING_IPV6: DeviceSubType = DeviceSubType(13);
-    /// UART Device Path.
-    pub const MESSAGING_UART: DeviceSubType = DeviceSubType(14);
-    /// USB Class Device Path.
-    pub const MESSAGING_USB_CLASS: DeviceSubType = DeviceSubType(15);
-    /// USB WWID Device Path.
-    pub const MESSAGING_USB_WWID: DeviceSubType = DeviceSubType(16);
-    /// Device Logical Unit.
-    pub const MESSAGING_DEVICE_LOGICAL_UNIT: DeviceSubType = DeviceSubType(17);
-    /// SATA Device Path.
-    pub const MESSAGING_SATA: DeviceSubType = DeviceSubType(18);
-    /// iSCSI Device Path node (base information).
-    pub const MESSAGING_ISCSI: DeviceSubType = DeviceSubType(19);
-    /// VLAN Device Path node.
-    pub const MESSAGING_VLAN: DeviceSubType = DeviceSubType(20);
-    /// Fibre Channel Ex Device Path.
-    pub const MESSAGING_FIBRE_CHANNEL_EX: DeviceSubType = DeviceSubType(21);
-    /// Serial Attached SCSI (SAS) Ex Device Path.
-    pub const MESSAGING_SCSI_SAS_EX: DeviceSubType = DeviceSubType(22);
-    /// NVM Express Namespace Device Path.
-    pub const MESSAGING_NVME_NAMESPACE: DeviceSubType = DeviceSubType(23);
-    /// Uniform Resource Identifiers (URI) Device Path.
-    pub const MESSAGING_URI: DeviceSubType = DeviceSubType(24);
-    /// UFS Device Path.
-    pub const MESSAGING_UFS: DeviceSubType = DeviceSubType(25);
-    /// SD (Secure Digital) Device Path.
-    pub const MESSAGING_SD: DeviceSubType = DeviceSubType(26);
-    /// Bluetooth Device Path.
-    pub const MESSAGING_BLUETOOTH: DeviceSubType = DeviceSubType(27);
-    /// Wi-Fi Device Path.
-    pub const MESSAGING_WIFI: DeviceSubType = DeviceSubType(28);
-    /// eMMC (Embedded Multi-Media Card) Device Path.
-    pub const MESSAGING_EMMC: DeviceSubType = DeviceSubType(29);
-    /// BluetoothLE Device Path.
-    pub const MESSAGING_BLUETOOTH_LE: DeviceSubType = DeviceSubType(30);
-    /// DNS Device Path.
-    pub const MESSAGING_DNS: DeviceSubType = DeviceSubType(31);
-    /// NVDIMM Namespace Device Path.
-    pub const MESSAGING_NVDIMM_NAMESPACE: DeviceSubType = DeviceSubType(32);
-    /// REST Service Device Path.
-    pub const MESSAGING_REST_SERVICE: DeviceSubType = DeviceSubType(33);
-    /// NVME over Fabric (NVMe-oF) Namespace Device Path.
-    pub const MESSAGING_NVME_OF_NAMESPACE: DeviceSubType = DeviceSubType(34);
-
-    /// Hard Drive Media Device Path.
-    pub const MEDIA_HARD_DRIVE: DeviceSubType = DeviceSubType(1);
-    /// CD-ROM Media Device Path.
-    pub const MEDIA_CD_ROM: DeviceSubType = DeviceSubType(2);
-    /// Vendor-Defined Media Device Path.
-    pub const MEDIA_VENDOR: DeviceSubType = DeviceSubType(3);
-    /// File Path Media Device Path.
-    pub const MEDIA_FILE_PATH: DeviceSubType = DeviceSubType(4);
-    /// Media Protocol Device Path.
-    pub const MEDIA_PROTOCOL: DeviceSubType = DeviceSubType(5);
-    /// PIWG Firmware File.
-    pub const MEDIA_PIWG_FIRMWARE_FILE: DeviceSubType = DeviceSubType(6);
-    /// PIWG Firmware Volume.
-    pub const MEDIA_PIWG_FIRMWARE_VOLUME: DeviceSubType = DeviceSubType(7);
-    /// Relative Offset Range.
-    pub const MEDIA_RELATIVE_OFFSET_RANGE: DeviceSubType = DeviceSubType(8);
-    /// RAM Disk Device Path.
-    pub const MEDIA_RAM_DISK: DeviceSubType = DeviceSubType(9);
-
-    /// BIOS Boot Specification Device Path.
-    pub const BIOS_BOOT_SPECIFICATION: DeviceSubType = DeviceSubType(1);
-
-    /// End this instance of a Device Path and start a new one.
-    pub const END_INSTANCE: DeviceSubType = DeviceSubType(0x01);
-    /// End entire Device Path.
-    pub const END_ENTIRE: DeviceSubType = DeviceSubType(0xff);
+pub enum ByteConversionError {
+    /// The length of the given slice is not valid for its [`DevicePath`] type.
+    InvalidLength,
 }
 
 /// Error returned when converting from a [`DevicePathNode`] to a more
 /// specific node type.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NodeConversionError {
+    /// The requested node type does not match the actual node type.
+    DifferentType,
+
     /// The length of the node data is not valid for its type.
     InvalidLength,
 
@@ -748,19 +734,23 @@ pub enum NodeConversionError {
 ///
 /// The layout of this type is the same as a [`DevicePath`].
 ///
-/// [`load_image`]: crate::table::boot::BootServices::load_image
+/// [`load_image`]: crate::boot::load_image
 #[repr(transparent)]
 #[unsafe_protocol("bc62157e-3e33-4fec-9920-2d3b36d750df")]
-#[derive(Pointee)]
+#[derive(Debug, Pointee)]
 pub struct LoadedImageDevicePath(DevicePath);
 
 impl ProtocolPointer for LoadedImageDevicePath {
     unsafe fn ptr_from_ffi(ptr: *const c_void) -> *const Self {
-        ptr_meta::from_raw_parts(ptr.cast(), DevicePath::size_in_bytes_from_ptr(ptr))
+        ptr_meta::from_raw_parts(ptr.cast(), unsafe {
+            DevicePath::size_in_bytes_from_ptr(ptr)
+        })
     }
 
     unsafe fn mut_ptr_from_ffi(ptr: *mut c_void) -> *mut Self {
-        ptr_meta::from_raw_parts_mut(ptr.cast(), DevicePath::size_in_bytes_from_ptr(ptr))
+        ptr_meta::from_raw_parts_mut(ptr.cast(), unsafe {
+            DevicePath::size_in_bytes_from_ptr(ptr)
+        })
     }
 }
 
@@ -786,6 +776,8 @@ pub enum DevicePathToTextError {
     /// The handle supporting the [`DevicePathToText`] protocol exists but it
     /// could not be opened.
     CantOpenProtocol(crate::Error),
+    /// Failed to allocate pool memory.
+    OutOfMemory,
 }
 
 impl Display for DevicePathToTextError {
@@ -794,12 +786,11 @@ impl Display for DevicePathToTextError {
     }
 }
 
-#[cfg(feature = "unstable")]
 impl core::error::Error for DevicePathToTextError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
-            DevicePathToTextError::CantLocateHandleBuffer(e) => Some(e),
-            DevicePathToTextError::CantOpenProtocol(e) => Some(e),
+            Self::CantLocateHandleBuffer(e) => Some(e),
+            Self::CantOpenProtocol(e) => Some(e),
             _ => None,
         }
     }
@@ -807,26 +798,81 @@ impl core::error::Error for DevicePathToTextError {
 
 /// Helper function to open the [`DevicePathToText`] protocol using the boot
 /// services.
-fn open_text_protocol(
-    bs: &BootServices,
-) -> Result<ScopedProtocol<DevicePathToText>, DevicePathToTextError> {
-    let &handle = bs
-        .locate_handle_buffer(SearchType::ByProtocol(&DevicePathToText::GUID))
+#[cfg(feature = "alloc")]
+fn open_text_protocol() -> Result<ScopedProtocol<DevicePathToText>, DevicePathToTextError> {
+    let &handle = boot::locate_handle_buffer(SearchType::ByProtocol(&DevicePathToText::GUID))
         .map_err(DevicePathToTextError::CantLocateHandleBuffer)?
         .first()
         .ok_or(DevicePathToTextError::NoHandle)?;
 
     unsafe {
-        bs.open_protocol::<DevicePathToText>(
+        boot::open_protocol::<DevicePathToText>(
             OpenProtocolParams {
                 handle,
-                agent: bs.image_handle(),
+                agent: boot::image_handle(),
                 controller: None,
             },
             OpenProtocolAttributes::GetProtocol,
         )
     }
     .map_err(DevicePathToTextError::CantOpenProtocol)
+}
+
+/// Errors that may occur when working with the [`DevicePathUtilities`] protocol.
+///
+/// These errors are typically encountered during operations involving device
+/// paths, such as appending or manipulating path segments.
+#[derive(Debug)]
+pub enum DevicePathUtilitiesError {
+    /// Can't locate a handle buffer with handles associated with the
+    /// [`DevicePathUtilities`] protocol.
+    CantLocateHandleBuffer(crate::Error),
+    /// No handle supporting the [`DevicePathUtilities`] protocol was found.
+    NoHandle,
+    /// The handle supporting the [`DevicePathUtilities`] protocol exists but
+    /// it could not be opened.
+    CantOpenProtocol(crate::Error),
+    /// Memory allocation failed during device path operations.
+    OutOfMemory,
+}
+
+impl Display for DevicePathUtilitiesError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl core::error::Error for DevicePathUtilitiesError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::CantLocateHandleBuffer(e) => Some(e),
+            Self::CantOpenProtocol(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+/// Helper function to open the [`DevicePathUtilities`] protocol using the boot
+/// services.
+#[cfg(feature = "alloc")]
+fn open_utility_protocol() -> Result<ScopedProtocol<DevicePathUtilities>, DevicePathUtilitiesError>
+{
+    let &handle = boot::locate_handle_buffer(SearchType::ByProtocol(&DevicePathToText::GUID))
+        .map_err(DevicePathUtilitiesError::CantLocateHandleBuffer)?
+        .first()
+        .ok_or(DevicePathUtilitiesError::NoHandle)?;
+
+    unsafe {
+        boot::open_protocol::<DevicePathUtilities>(
+            OpenProtocolParams {
+                handle,
+                agent: boot::image_handle(),
+                controller: None,
+            },
+            OpenProtocolAttributes::GetProtocol,
+        )
+    }
+    .map_err(DevicePathUtilitiesError::CantOpenProtocol)
 }
 
 #[cfg(test)]
@@ -840,7 +886,7 @@ mod tests {
         path.push(device_type);
         path.push(sub_type);
         path.extend(
-            u16::try_from(mem::size_of::<DevicePathHeader>() + node_data.len())
+            u16::try_from(size_of::<DevicePathHeader>() + node_data.len())
                 .unwrap()
                 .to_le_bytes(),
         );
@@ -879,7 +925,7 @@ mod tests {
         assert_eq!(node.sub_type().0, sub_type);
         assert_eq!(
             node.length(),
-            u16::try_from(mem::size_of::<DevicePathHeader>() + node_data.len()).unwrap()
+            u16::try_from(size_of::<DevicePathHeader>() + node_data.len()).unwrap()
         );
         assert_eq!(&node.data, node_data);
     }
@@ -890,7 +936,7 @@ mod tests {
         let dp = unsafe { DevicePath::from_ffi_ptr(raw_data.as_ptr().cast()) };
 
         // Check that the size is the sum of the nodes' lengths.
-        assert_eq!(mem::size_of_val(dp), 6 + 8 + 4 + 6 + 8 + 4);
+        assert_eq!(size_of_val(dp), 6 + 8 + 4 + 6 + 8 + 4);
 
         // Check the list's node iter.
         let nodes: Vec<_> = dp.node_iter().collect();
@@ -916,7 +962,7 @@ mod tests {
         // Check the list's instance iter.
         let mut iter = dp.instance_iter();
         let mut instance = iter.next().unwrap();
-        assert_eq!(mem::size_of_val(instance), 6 + 8 + 4);
+        assert_eq!(size_of_val(instance), 6 + 8 + 4);
 
         // Check the first instance's node iter.
         let nodes: Vec<_> = instance.node_iter().collect();
@@ -927,7 +973,7 @@ mod tests {
 
         // Check second instance.
         instance = iter.next().unwrap();
-        assert_eq!(mem::size_of_val(instance), 6 + 8 + 4);
+        assert_eq!(size_of_val(instance), 6 + 8 + 4);
 
         let nodes: Vec<_> = instance.node_iter().collect();
         check_node(nodes[0], 0xa2, 0xb2, &[30, 31]);
@@ -953,5 +999,77 @@ mod tests {
         let owned_dp = dp.to_owned();
         let owned_dp_ref = &*owned_dp;
         assert_eq!(owned_dp_ref, dp)
+    }
+
+    #[test]
+    fn test_device_path_node_from_bytes() {
+        let mut raw_data = Vec::new();
+        let node = [0xa0, 0xb0];
+        let node_data = &[10, 11];
+
+        // Raw data is less than size of a [`DevicePathNode`].
+        raw_data.push(node[0]);
+        assert!(<&DevicePathNode>::try_from(raw_data.as_slice()).is_err());
+
+        // Raw data is long enough to hold a [`DevicePathNode`].
+        raw_data.push(node[1]);
+        raw_data.extend(
+            u16::try_from(size_of::<DevicePathHeader>() + node_data.len())
+                .unwrap()
+                .to_le_bytes(),
+        );
+        raw_data.extend(node_data);
+        let dp = <&DevicePathNode>::try_from(raw_data.as_slice()).unwrap();
+
+        // Relevant assertions to verify the conversion is fine.
+        assert_eq!(size_of_val(dp), 6);
+        check_node(dp, 0xa0, 0xb0, &[10, 11]);
+
+        // [`DevicePathNode`] data length exceeds the raw_data slice.
+        raw_data[2] += 1;
+        assert!(<&DevicePathNode>::try_from(raw_data.as_slice()).is_err());
+    }
+
+    #[test]
+    fn test_device_path_nodes_from_bytes() {
+        let raw_data = create_raw_device_path();
+        let dp = <&DevicePath>::try_from(raw_data.as_slice()).unwrap();
+
+        // Check that the size is the sum of the nodes' lengths.
+        assert_eq!(size_of_val(dp), 6 + 8 + 4 + 6 + 8 + 4);
+
+        // Check the list's node iter.
+        let nodes: Vec<_> = dp.node_iter().collect();
+        check_node(nodes[0], 0xa0, 0xb0, &[10, 11]);
+        check_node(nodes[1], 0xa1, 0xb1, &[20, 21, 22, 23]);
+        check_node(
+            nodes[2],
+            DeviceType::END.0,
+            DeviceSubType::END_INSTANCE.0,
+            &[],
+        );
+        check_node(nodes[3], 0xa2, 0xb2, &[30, 31]);
+        check_node(nodes[4], 0xa3, 0xb3, &[40, 41, 42, 43]);
+        // The end-entire node is not returned by the iterator.
+        assert_eq!(nodes.len(), 5);
+    }
+
+    /// Test converting from `&DevicePathNode` to a specific node type.
+    #[test]
+    fn test_specific_node_from_device_path_node() {
+        let mut raw_data = Vec::new();
+        add_node(
+            &mut raw_data,
+            DeviceType::END.0,
+            DeviceSubType::END_INSTANCE.0,
+            &[],
+        );
+        let node = <&DevicePathNode>::try_from(raw_data.as_slice()).unwrap();
+
+        assert!(<&end::Instance>::try_from(node).is_ok());
+        assert_eq!(
+            <&end::Entire>::try_from(node).unwrap_err(),
+            NodeConversionError::DifferentType
+        );
     }
 }

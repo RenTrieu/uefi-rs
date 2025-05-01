@@ -1,9 +1,12 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // allow "path.rs" in "path"
 #![allow(clippy::module_inception)]
 
 use crate::fs::path::{PathBuf, SEPARATOR};
 use crate::{CStr16, CString16};
 use core::fmt::{Display, Formatter};
+use core::ptr;
 
 /// A path similar to the `Path` of the standard library, but based on
 /// [`CStr16`] strings and [`SEPARATOR`] as separator.
@@ -16,12 +19,12 @@ impl Path {
     /// Constructor.
     #[must_use]
     pub fn new<S: AsRef<CStr16> + ?Sized>(s: &S) -> &Self {
-        unsafe { &*(s.as_ref() as *const CStr16 as *const Self) }
+        unsafe { &*(ptr::from_ref(s.as_ref()) as *const Self) }
     }
 
     /// Returns the underlying string.
     #[must_use]
-    pub fn to_cstr16(&self) -> &CStr16 {
+    pub const fn to_cstr16(&self) -> &CStr16 {
         &self.0
     }
 
@@ -79,7 +82,7 @@ impl Path {
 
     /// Returns of the path is empty.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.to_cstr16().is_empty()
     }
 }
@@ -109,7 +112,7 @@ pub struct Components<'a> {
     i: usize,
 }
 
-impl<'a> Iterator for Components<'a> {
+impl Iterator for Components<'_> {
     // Attention. We can't iterate over &'Ctr16, as we would break any guarantee
     // made for the terminating null character.
     type Item = CString16;
@@ -198,8 +201,8 @@ mod convenience_impls {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cstr16;
     use alloc::vec::Vec;
-    use uefi_macros::cstr16;
 
     #[test]
     fn from_cstr16() {

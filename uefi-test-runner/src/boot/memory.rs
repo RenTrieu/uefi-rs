@@ -1,99 +1,108 @@
-use uefi::table::boot::{AllocateType, BootServices, MemoryType};
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
 use alloc::vec::Vec;
+use uefi::boot;
+use uefi::mem::memory_map::{MemoryMap, MemoryMapMut};
+use uefi_raw::table::boot::MemoryType;
 
-pub fn test(bt: &BootServices) {
+pub fn test() {
     info!("Testing memory functions");
 
-    allocate_pages(bt);
-    vec_alloc();
-    alloc_alignment();
-    memmove(bt);
+    bootservices::allocate_pages();
+    bootservices::allocate_pool();
 
-    memory_map(bt);
+    global::alloc_vec();
+    global::alloc_alignment();
+
+    test_memory_map();
 }
 
-fn allocate_pages(bt: &BootServices) {
-    info!("Allocating some pages of memory");
+/// Tests that directly use UEFI boot services to allocate memory.
+mod bootservices {
+    use uefi::boot;
+    use uefi::boot::AllocateType;
+    use uefi_raw::table::boot::MemoryType;
 
-    let ty = AllocateType::AnyPages;
-    let mem_ty = MemoryType::LOADER_DATA;
-    let pgs = bt
-        .allocate_pages(ty, mem_ty, 1)
-        .expect("Failed to allocate a page of memory");
+    /// Tests the `allocate_pages` boot service.
+    pub fn allocate_pages() {
+        let num_pages = 1;
+        let ptr = boot::allocate_pages(AllocateType::AnyPages, MemoryType::LOADER_DATA, num_pages)
+            .unwrap();
+        let addr = ptr.as_ptr() as usize;
+        assert_eq!(addr % 4096, 0, "Page pointer is not page-aligned");
 
-    assert_eq!(pgs % 4096, 0, "Page pointer is not page-aligned");
+        // Verify the page can be written to.
+        {
+            let ptr = ptr.as_ptr();
+            unsafe { ptr.write_volatile(0xff) };
+            unsafe { ptr.add(4095).write_volatile(0xff) };
+        }
 
-    // Reinterpret the page as an array of bytes
-    let buf = unsafe { &mut *(pgs as *mut [u8; 4096]) };
-
-    // If these don't fail then we properly allocated some memory.
-    buf[0] = 0xF0;
-    buf[4095] = 0x23;
-
-    // Clean up to avoid memory leaks.
-    bt.free_pages(pgs, 1).unwrap();
-}
-
-// Simple test to ensure our custom allocator works with the `alloc` crate.
-fn vec_alloc() {
-    info!("Allocating a vector through the `alloc` crate");
-
-    let mut values = vec![-5, 16, 23, 4, 0];
-
-    values.sort_unstable();
-
-    assert_eq!(values[..], [-5, 0, 4, 16, 23], "Failed to sort vector");
-}
-
-// Simple test to ensure our custom allocator works with correct alignment.
-fn alloc_alignment() {
-    info!("Allocating a structure with alignment to 0x100");
-
-    #[repr(align(0x100))]
-    struct Block([u8; 0x100]);
-
-    let value = vec![Block([1; 0x100])];
-    assert_eq!(value.as_ptr() as usize % 0x100, 0, "Wrong alignment");
-}
-
-// Test that the `memmove` / `set_mem` functions work.
-fn memmove(bt: &BootServices) {
-    info!("Testing the `memmove` / `set_mem` functions");
-
-    let src = [1, 2, 3, 4];
-    let mut dest = [0u8; 4];
-
-    // Fill the buffer with a value
-    unsafe {
-        bt.set_mem(dest.as_mut_ptr(), dest.len(), 1);
+        unsafe { boot::free_pages(ptr, num_pages) }.unwrap();
     }
 
-    assert_eq!(dest, [1; 4], "Failed to set memory");
+    /// Tests the `allocate_pool` boot service.
+    pub fn allocate_pool() {
+        let ptr = boot::allocate_pool(MemoryType::LOADER_DATA, 10).unwrap();
 
-    // Copy other values on it
-    unsafe {
-        bt.memmove(dest.as_mut_ptr(), src.as_ptr(), dest.len());
+        // Verify the allocation can be written to.
+        {
+            let ptr = ptr.as_ptr();
+            unsafe { ptr.write_volatile(0xff) };
+            unsafe { ptr.add(9).write_volatile(0xff) };
+        }
+        unsafe { boot::free_pool(ptr) }.unwrap();
     }
-
-    assert_eq!(dest, src, "Failed to copy memory");
 }
 
-fn memory_map(bt: &BootServices) {
+/// Tests that use [`uefi::allocator::Allocator`], which is configured as the
+/// global allocator.
+mod global {
+    use alloc::boxed::Box;
+    use uefi_raw::table::boot::PAGE_SIZE;
+
+    /// Simple test to ensure our custom allocator works with the `alloc` crate.
+    pub fn alloc_vec() {
+        info!("Allocating a vector using the global allocator");
+
+        #[allow(clippy::useless_vec)]
+        let mut values = vec![-5, 16, 23, 4, 0];
+
+        values.sort_unstable();
+
+        assert_eq!(values[..], [-5, 0, 4, 16, 23], "Failed to sort vector");
+    }
+
+    /// Simple test to ensure our custom allocator works with correct alignment.
+    #[allow(dead_code)] // Ignore warning due to field not being read.
+    pub fn alloc_alignment() {
+        {
+            info!("Allocating a structure with alignment of 0x100 using the global allocator");
+            #[repr(align(0x100))]
+            struct Block([u8; 0x100]);
+
+            let value = vec![Block([1; 0x100])];
+            assert_eq!(value.as_ptr() as usize % 0x100, 0, "Wrong alignment");
+        }
+        {
+            info!("Allocating a memory page ({PAGE_SIZE}) using the global allocator");
+            #[repr(align(4096))]
+            struct Page([u8; PAGE_SIZE]);
+            let value = Box::new(Page([0; PAGE_SIZE]));
+            assert_eq!(
+                value.0.as_ptr().align_offset(PAGE_SIZE),
+                0,
+                "Wrong alignment"
+            );
+        }
+    }
+}
+
+fn test_memory_map() {
     info!("Testing memory map functions");
 
-    // Get the memory descriptor size and an estimate of the memory map size
-    let sizes = bt.memory_map_size();
-
-    // 2 extra descriptors should be enough.
-    let buf_sz = sizes.map_size + 2 * sizes.entry_size;
-
-    // We will use vectors for convenience.
-    let mut buffer = vec![0_u8; buf_sz];
-
-    let mut memory_map = bt
-        .memory_map(&mut buffer)
-        .expect("Failed to retrieve UEFI memory map");
+    let mut memory_map =
+        boot::memory_map(MemoryType::LOADER_DATA).expect("Failed to retrieve UEFI memory map");
 
     memory_map.sort();
 
@@ -113,7 +122,8 @@ fn memory_map(bt: &BootServices) {
         curr_value = *value;
     }
 
-    // This is pretty much a sanity test to ensure returned memory isn't filled with random values.
+    // This is pretty much a basic sanity test to ensure returned memory
+    // isn't filled with random values.
     let first_desc = descriptors[0];
 
     #[cfg(target_arch = "x86_64")]
@@ -122,5 +132,5 @@ fn memory_map(bt: &BootServices) {
         assert_eq!(phys_start, 0, "Memory does not start at address 0");
     }
     let page_count = first_desc.page_count;
-    assert!(page_count != 0, "Memory map entry has zero size");
+    assert!(page_count != 0, "Memory map entry has size zero");
 }

@@ -1,10 +1,12 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! UEFI services available at runtime, even after the OS boots.
 
 use crate::capsule::CapsuleHeader;
 use crate::table::boot::MemoryDescriptor;
 use crate::table::Header;
 use crate::time::Time;
-use crate::{guid, Char16, Guid, PhysicalAddress, Status};
+use crate::{guid, Boolean, Char16, Guid, PhysicalAddress, Status};
 use bitflags::bitflags;
 use core::ffi::c_void;
 
@@ -12,6 +14,7 @@ use core::ffi::c_void;
 ///
 /// This table, and the function pointers it contains are valid even after the
 /// UEFI OS loader and OS have taken control of the platform.
+#[derive(Debug)]
 #[repr(C)]
 pub struct RuntimeServices {
     pub header: Header,
@@ -65,7 +68,7 @@ pub struct RuntimeServices {
     pub query_capsule_capabilities: unsafe extern "efiapi" fn(
         capsule_header_array: *const *const CapsuleHeader,
         capsule_count: usize,
-        maximum_capsule_size: *mut usize,
+        maximum_capsule_size: *mut u64,
         reset_type: *mut ResetType,
     ) -> Status,
 
@@ -79,6 +82,7 @@ pub struct RuntimeServices {
 }
 
 newtype_enum! {
+    #[derive(Default)]
     /// The type of system reset.
     pub enum ResetType: u32 => {
         /// System-wide reset.
@@ -113,7 +117,7 @@ pub struct TimeCapabilities {
 
     /// Whether a time set operation clears the device's time below the
     /// "resolution" reporting level. False for normal PC-AT CMOS RTC devices.
-    pub sets_to_zero: bool,
+    pub sets_to_zero: Boolean,
 }
 
 bitflags! {

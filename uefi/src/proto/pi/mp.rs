@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Multi-processor management protocols.
 //!
 //! On any system with more than one logical processor we can categorize them as:
@@ -11,6 +13,7 @@
 //! * dispatching user-provided function to APs
 //! * maintaining MP-related processor status
 
+use crate::data_types::Event;
 use crate::proto::unsafe_protocol;
 use crate::{Result, Status, StatusExt};
 use bitflags::bitflags;
@@ -93,6 +96,7 @@ pub struct CpuPhysicalLocation {
 }
 
 /// Protocol that provides services needed for multi-processor management.
+#[derive(Debug)]
 #[repr(C)]
 #[unsafe_protocol("3fdda605-a76e-4f46-ad29-12f4531b3d08")]
 pub struct MpServices {
@@ -153,12 +157,13 @@ impl MpServices {
         (self.get_processor_info)(self, processor_number, &mut pi).to_result_with_val(|| pi)
     }
 
-    /// Executes provided function on all APs in blocking mode.
+    /// Executes provided function on all APs.
     pub fn startup_all_aps(
         &self,
         single_thread: bool,
         procedure: Procedure,
         procedure_argument: *mut c_void,
+        event: Option<Event>,
         timeout: Option<Duration>,
     ) -> Result {
         let timeout_arg = match timeout {
@@ -166,11 +171,16 @@ impl MpServices {
             None => 0,
         };
 
+        let event_arg = match event {
+            Some(event) => event.as_ptr(),
+            None => ptr::null_mut(),
+        };
+
         (self.startup_all_aps)(
             self,
             procedure,
             single_thread,
-            ptr::null_mut(),
+            event_arg,
             timeout_arg,
             procedure_argument,
             ptr::null_mut(),
@@ -184,6 +194,7 @@ impl MpServices {
         processor_number: usize,
         procedure: Procedure,
         procedure_argument: *mut c_void,
+        event: Option<Event>,
         timeout: Option<Duration>,
     ) -> Result {
         let timeout_arg = match timeout {
@@ -191,11 +202,16 @@ impl MpServices {
             None => 0,
         };
 
+        let event_arg = match event {
+            Some(event) => event.as_ptr(),
+            None => ptr::null_mut(),
+        };
+
         (self.startup_this_ap)(
             self,
             procedure,
             processor_number,
-            ptr::null_mut(),
+            event_arg,
             timeout_arg,
             procedure_argument,
             ptr::null_mut(),

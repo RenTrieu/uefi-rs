@@ -1,9 +1,8 @@
-use uefi::table::{Boot, SystemTable};
-use uefi::{entry, Handle, Status};
+use uefi::{entry, Status};
 
 /// Docstring.
 #[entry]
-fn efi_main(image: Handle, st: SystemTable<Boot>) -> Status {
+fn efi_main() -> Status {
     Status::SUCCESS
 }
 

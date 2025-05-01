@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // ANCHOR: all
 // ANCHOR: features
 #![no_main]
@@ -11,14 +13,14 @@ use uefi::prelude::*;
 
 // ANCHOR: entry
 #[entry]
-fn main(_image_handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
+fn main() -> Status {
     // ANCHOR_END: entry
     // ANCHOR: services
-    uefi_services::init(&mut system_table).unwrap();
+    uefi::helpers::init().unwrap();
     // ANCHOR_END: services
     // ANCHOR: log
     info!("Hello world!");
-    system_table.boot_services().stall(10_000_000);
+    boot::stall(10_000_000);
     // ANCHOR_END: log
     // ANCHOR: return
     Status::SUCCESS

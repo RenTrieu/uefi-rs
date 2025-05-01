@@ -1,10 +1,14 @@
-use core::mem;
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+use core::ptr::{self, NonNull};
 
 /// Copy the bytes of `val` to `ptr`, then advance pointer to just after the
 /// newly-copied bytes.
 pub unsafe fn ptr_write_unaligned_and_add<T>(ptr: &mut *mut u8, val: T) {
-    ptr.cast::<T>().write_unaligned(val);
-    *ptr = ptr.add(mem::size_of::<T>());
+    unsafe {
+        ptr.cast::<T>().write_unaligned(val);
+        *ptr = ptr.add(size_of::<T>());
+    }
 }
 
 /// Convert from a `u32` to a `usize`. Panic if the input does fit. On typical
@@ -17,11 +21,16 @@ pub unsafe fn ptr_write_unaligned_and_add<T>(ptr: &mut *mut u8, val: T) {
 pub const fn usize_from_u32(val: u32) -> usize {
     // This is essentially the same as `usize::try_from(val).unwrap()`, but
     // works in a `const` context on stable.
-    if mem::size_of::<usize>() < mem::size_of::<u32>() && val < (usize::MAX as u32) {
+    if size_of::<usize>() < size_of::<u32>() && val < (usize::MAX as u32) {
         panic!("value does not fit in a usize");
     } else {
         val as usize
     }
+}
+
+/// Get the raw pointer from `opt`, defaulting to `null_mut`.
+pub fn opt_nonnull_to_ptr<T>(opt: Option<NonNull<T>>) -> *mut T {
+    opt.map(NonNull::as_ptr).unwrap_or(ptr::null_mut())
 }
 
 #[cfg(test)]

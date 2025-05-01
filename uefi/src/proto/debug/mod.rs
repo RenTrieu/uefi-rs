@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Provides support for the UEFI debugging protocol.
 //!
 //! This protocol is designed to allow debuggers to query the state of the firmware,
@@ -15,8 +17,8 @@ use crate::proto::unsafe_protocol;
 use crate::{Result, Status, StatusExt};
 
 // re-export for ease of use
-pub use self::context::SystemContext;
-pub use self::exception::ExceptionType;
+pub use context::SystemContext;
+pub use exception::ExceptionType;
 
 mod context;
 mod exception;
@@ -29,6 +31,7 @@ mod exception;
 /// one for any given instruction set.
 ///
 /// NOTE: OVMF only implements this protocol interface for the virtual EBC processor
+#[derive(Debug)]
 #[repr(C)]
 #[unsafe_protocol("2755590c-6f3c-42fa-9ea4-a3ba543cda25")]
 pub struct DebugSupport {
@@ -95,7 +98,7 @@ impl DebugSupport {
         }
 
         // Safety: As we've validated the `processor_index`, this should always be safe
-        (self.register_periodic_callback)(self, processor_index, callback).to_result()
+        unsafe { (self.register_periodic_callback)(self, processor_index, callback) }.to_result()
     }
 
     /// Registers a function to be called when a given processor exception occurs.
@@ -119,8 +122,10 @@ impl DebugSupport {
         }
 
         // Safety: As we've validated the `processor_index`, this should always be safe
-        (self.register_exception_callback)(self, processor_index, callback, exception_type)
-            .to_result()
+        unsafe {
+            (self.register_exception_callback)(self, processor_index, callback, exception_type)
+        }
+        .to_result()
     }
 
     /// Invalidates processor instruction cache for a memory range for a given `processor_index`.
@@ -141,7 +146,8 @@ impl DebugSupport {
 
         // per the UEFI spec, this call should only return EFI_SUCCESS
         // Safety: As we've validated the `processor_index`, this should always be safe
-        (self.invalidate_instruction_cache)(self, processor_index, start, length).to_result()
+        unsafe { (self.invalidate_instruction_cache)(self, processor_index, start, length) }
+            .to_result()
     }
 }
 
@@ -174,6 +180,7 @@ pub enum ProcessorArch: u32 => {
 
 /// The debug port protocol abstracts the underlying debug port
 /// hardware, whether it is a regular Serial port or something else.
+#[derive(Debug)]
 #[repr(C)]
 #[unsafe_protocol("eba4e8d2-3858-41ec-a281-2647ba9660d0")]
 pub struct DebugPort {

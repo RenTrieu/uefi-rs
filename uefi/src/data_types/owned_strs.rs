@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use super::chars::{Char16, NUL_16};
 use super::strs::{CStr16, FromSliceWithNulError};
 use crate::data_types::strs::EqStrUntilNul;
@@ -7,7 +9,8 @@ use alloc::borrow::{Borrow, ToOwned};
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use core::{fmt, ops};
+use core::fmt::{self, Display, Formatter};
+use core::{ops, ptr};
 
 /// Error returned by [`CString16::try_from::<&str>`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -18,8 +21,8 @@ pub enum FromStrError {
     InteriorNul,
 }
 
-impl fmt::Display for FromStrError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Display for FromStrError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "UCS-2 Conversion Error: {}",
@@ -31,7 +34,6 @@ impl fmt::Display for FromStrError {
     }
 }
 
-#[cfg(feature = "unstable")]
 impl core::error::Error for FromStrError {}
 
 /// An owned UCS-2 null-terminated string.
@@ -49,7 +51,7 @@ impl core::error::Error for FromStrError {}
 /// let s = CString16::try_from("abc").unwrap();
 /// assert_eq!(s.to_string(), "abc");
 /// ```
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct CString16(Vec<Char16>);
 
 impl CString16 {
@@ -112,7 +114,7 @@ impl CString16 {
 
 impl Default for CString16 {
     fn default() -> Self {
-        CString16::new()
+        Self::new()
     }
 }
 
@@ -140,7 +142,7 @@ impl TryFrom<&str> for CString16 {
         // Add trailing nul.
         output.push(NUL_16);
 
-        Ok(CString16(output))
+        Ok(Self(output))
     }
 }
 
@@ -169,12 +171,12 @@ impl TryFrom<Vec<u16>> for CString16 {
     }
 }
 
-impl<'a> TryFrom<&UnalignedSlice<'a, u16>> for CString16 {
+impl TryFrom<&UnalignedSlice<'_, u16>> for CString16 {
     type Error = FromSliceWithNulError;
 
     fn try_from(input: &UnalignedSlice<u16>) -> Result<Self, Self::Error> {
         let v = input.to_vec();
-        CString16::try_from(v)
+        Self::try_from(v)
     }
 }
 
@@ -188,11 +190,11 @@ impl From<&CStr16> for CString16 {
 impl From<&CString16> for String {
     fn from(value: &CString16) -> Self {
         let slice: &CStr16 = value.as_ref();
-        String::from(slice)
+        Self::from(slice)
     }
 }
 
-impl<'a> UnalignedSlice<'a, u16> {
+impl UnalignedSlice<'_, u16> {
     /// Copies `self` to a new [`CString16`].
     pub fn to_cstring16(&self) -> Result<CString16, FromSliceWithNulError> {
         CString16::try_from(self)
@@ -203,7 +205,7 @@ impl ops::Deref for CString16 {
     type Target = CStr16;
 
     fn deref(&self) -> &CStr16 {
-        unsafe { &*(self.0.as_slice() as *const [Char16] as *const CStr16) }
+        unsafe { &*(ptr::from_ref(self.0.as_slice()) as *const CStr16) }
     }
 }
 

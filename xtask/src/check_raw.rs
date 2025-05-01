@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Validate various properties of the code in the `uefi-raw` package.
 //!
 //! For example, this checks that no Rust enums are used, that structs have an
@@ -16,8 +18,8 @@ use syn::spanned::Spanned;
 use syn::token::Comma;
 use syn::{
     parenthesized, Abi, Attribute, Field, Fields, FieldsNamed, FieldsUnnamed, File, Item,
-    ItemConst, ItemMacro, ItemStruct, ItemType, LitInt, ReturnType, Type, TypeArray, TypeBareFn,
-    TypePtr, Visibility,
+    ItemConst, ItemMacro, ItemStruct, ItemType, ItemUnion, LitInt, ReturnType, Type, TypeArray,
+    TypeBareFn, TypePtr, Visibility,
 };
 use walkdir::WalkDir;
 
@@ -31,6 +33,7 @@ enum ErrorKind {
     ForbiddenType,
     MalformedAttrs,
     MissingPub,
+    MissingRepr,
     MissingUnsafe,
     UnderscoreField,
     UnknownRepr,
@@ -49,6 +52,7 @@ impl Display for ErrorKind {
                 Self::ForbiddenType => "forbidden type",
                 Self::MalformedAttrs => "malformed attribute contents",
                 Self::MissingPub => "missing pub",
+                Self::MissingRepr => "missing repr",
                 Self::MissingUnsafe => "missing unsafe",
                 Self::UnderscoreField => "field name starts with `_`",
                 Self::UnknownRepr => "unknown repr",
@@ -104,18 +108,19 @@ fn is_pub(vis: &Visibility) -> bool {
     matches!(vis, Visibility::Public(_))
 }
 
-/// Type repr. A type may have more than one of these (e.g. both `C` and `Packed`).
-#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+/// Type repr. A type may have more than one of these (e.g. both `C` and `packed`).
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 enum Repr {
     Align(usize),
     C,
     Packed,
+    Rust,
     Transparent,
 }
 
 /// A restricted view of `Attribute`, limited to just the attributes that are
 /// expected in `uefi-raw`.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 enum ParsedAttr {
     Derive,
     Doc,
@@ -139,6 +144,8 @@ fn parse_attrs(attrs: &[Attribute], src: &Path) -> Result<Vec<ParsedAttr>, Error
                     va.push(ParsedAttr::Repr(Repr::C));
                 } else if meta.path.is_ident("packed") {
                     va.push(ParsedAttr::Repr(Repr::Packed));
+                } else if meta.path.is_ident("Rust") {
+                    va.push(ParsedAttr::Repr(Repr::Rust));
                 } else if meta.path.is_ident("transparent") {
                     va.push(ParsedAttr::Repr(Repr::Transparent));
                 } else if meta.path.is_ident("align") {
@@ -208,8 +215,8 @@ fn check_type(ty: &Type, src: &Path) -> Result<(), Error> {
 
 /// Validate a function pointer.
 fn check_fn_ptr(f: &TypeBareFn, src: &Path) -> Result<(), Error> {
-    // Require `extern efiapi`.
-    if !is_efiapi(f) {
+    // Require `extern efiapi`, except for c-variadics.
+    if !is_efiapi(f) && f.variadic.is_none() {
         return Err(Error::new(ErrorKind::ForbiddenAbi, src, f));
     }
 
@@ -253,13 +260,27 @@ fn check_fields(fields: &Punctuated<Field, Comma>, src: &Path) -> Result<(), Err
     Ok(())
 }
 
+/// List with allowed combinations of representations (see [`Repr`]).
+const ALLOWED_REPRS: &[&[Repr]] = &[&[Repr::C], &[Repr::C, Repr::Packed], &[Repr::Transparent]];
+
+fn check_type_attrs(attrs: &[Attribute], spanned: &dyn Spanned, src: &Path) -> Result<(), Error> {
+    let attrs = parse_attrs(attrs, src)?;
+    let reprs = get_reprs(&attrs);
+
+    if reprs.is_empty() {
+        Err(Error::new(ErrorKind::MissingRepr, src, spanned))
+    } else if ALLOWED_REPRS.contains(&reprs.as_slice()) {
+        Ok(())
+    } else {
+        Err(Error::new(ErrorKind::ForbiddenRepr, src, spanned))
+    }
+}
+
 /// Validate a struct.
 fn check_struct(item: &ItemStruct, src: &Path) -> Result<(), Error> {
     if !is_pub(&item.vis) {
         return Err(Error::new(ErrorKind::MissingPub, src, &item.struct_token));
     }
-
-    let attrs = parse_attrs(&item.attrs, src)?;
 
     match &item.fields {
         Fields::Named(FieldsNamed { named, .. }) => check_fields(named, src)?,
@@ -267,11 +288,20 @@ fn check_struct(item: &ItemStruct, src: &Path) -> Result<(), Error> {
         Fields::Unit => {}
     }
 
-    let reprs = get_reprs(&attrs);
-    let allowed_reprs: &[&[Repr]] = &[&[Repr::C], &[Repr::C, Repr::Packed], &[Repr::Transparent]];
-    if !allowed_reprs.contains(&reprs.as_slice()) {
-        return Err(Error::new(ErrorKind::ForbiddenRepr, src, item));
+    check_type_attrs(&item.attrs, item, src)?;
+
+    Ok(())
+}
+
+/// Validate a union.
+fn check_union(item: &ItemUnion, src: &Path) -> Result<(), Error> {
+    if !is_pub(&item.vis) {
+        return Err(Error::new(ErrorKind::MissingPub, src, &item.union_token));
     }
+
+    check_fields(&item.fields.named, src)?;
+
+    check_type_attrs(&item.attrs, item, src)?;
 
     Ok(())
 }
@@ -318,6 +348,9 @@ fn check_item(item: &Item, src: &Path) -> Result<(), Error> {
         }
         Item::Struct(item) => {
             check_struct(item, src)?;
+        }
+        Item::Union(item) => {
+            check_union(item, src)?;
         }
         Item::Macro(item) => {
             check_macro(item, src)?;
@@ -385,6 +418,7 @@ mod tests {
         Path::new("test")
     }
 
+    #[track_caller]
     fn check_item_err(item: Item, expected_error: ErrorKind) {
         assert_eq!(check_item(&item, src()).unwrap_err().kind, expected_error);
     }
@@ -428,6 +462,15 @@ mod tests {
         assert!(check_fn_ptr(
             &parse_quote! {
                 unsafe extern "efiapi" fn()
+            },
+            src(),
+        )
+        .is_ok());
+
+        // Valid fn ptr with c-variadics.
+        assert!(check_fn_ptr(
+            &parse_quote! {
+                unsafe extern "C" fn(usize, ...)
             },
             src(),
         )
@@ -513,9 +556,20 @@ mod tests {
             ErrorKind::UnderscoreField,
         );
 
+        // Missing `repr`.
+        check_item_err(
+            parse_quote! {
+                pub struct S {
+                    pub f: u32,
+                }
+            },
+            ErrorKind::MissingRepr,
+        );
+
         // Forbidden `repr`.
         check_item_err(
             parse_quote! {
+                #[repr(Rust)]
                 pub struct S {
                     pub f: u32,
                 }
@@ -544,6 +598,54 @@ mod tests {
                 }
             },
             ErrorKind::ForbiddenType,
+        );
+    }
+
+    #[test]
+    fn test_union() {
+        // Valid union.
+        assert!(check_union(
+            &parse_quote! {
+                #[repr(C)]
+                pub union U {
+                    pub a: u32,
+                    pub b: u64,
+                }
+            },
+            src(),
+        )
+        .is_ok());
+
+        // Missing `pub` on union.
+        check_item_err(
+            parse_quote! {
+                #[repr(C)]
+                struct U {
+                    pub f: u32,
+                }
+            },
+            ErrorKind::MissingPub,
+        );
+
+        // Missing `pub` on field.
+        check_item_err(
+            parse_quote! {
+                #[repr(C)]
+                pub struct U {
+                    f: u32,
+                }
+            },
+            ErrorKind::MissingPub,
+        );
+
+        // Forbidden `repr`.
+        check_item_err(
+            parse_quote! {
+                pub struct S {
+                    pub f: u32,
+                }
+            },
+            ErrorKind::MissingRepr,
         );
     }
 }

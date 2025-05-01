@@ -1,26 +1,25 @@
-use crate::{send_request_to_host, HostRequest};
-use uefi::prelude::*;
-use uefi::proto::console::gop::{BltOp, BltPixel, FrameBuffer, GraphicsOutput, PixelFormat};
-use uefi::table::boot::{BootServices, OpenProtocolAttributes, OpenProtocolParams};
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
-pub unsafe fn test(image: Handle, bt: &BootServices) {
+use crate::{send_request_to_host, HostRequest};
+use uefi::boot::{self, OpenProtocolAttributes, OpenProtocolParams};
+use uefi::proto::console::gop::{BltOp, BltPixel, FrameBuffer, GraphicsOutput, PixelFormat};
+
+pub unsafe fn test() {
     info!("Running graphics output protocol test");
-    let handle = bt
-        .get_handle_for_protocol::<GraphicsOutput>()
-        .expect("missing GraphicsOutput protocol");
-    let gop = &mut bt
-        .open_protocol::<GraphicsOutput>(
-            OpenProtocolParams {
-                handle,
-                agent: image,
-                controller: None,
-            },
-            // For this test, don't open in exclusive mode. That
-            // would break the connection between stdout and the
-            // video console.
-            OpenProtocolAttributes::GetProtocol,
-        )
-        .expect("failed to open Graphics Output Protocol");
+    let handle =
+        boot::get_handle_for_protocol::<GraphicsOutput>().expect("missing GraphicsOutput protocol");
+    let gop = &mut boot::open_protocol::<GraphicsOutput>(
+        OpenProtocolParams {
+            handle,
+            agent: boot::image_handle(),
+            controller: None,
+        },
+        // For this test, don't open in exclusive mode. That
+        // would break the connection between stdout and the
+        // video console.
+        OpenProtocolAttributes::GetProtocol,
+    )
+    .expect("failed to open Graphics Output Protocol");
 
     set_graphics_mode(gop);
     fill_color(gop);
@@ -28,7 +27,7 @@ pub unsafe fn test(image: Handle, bt: &BootServices) {
 
     // `draw_fb` is skipped on aarch64, so the screenshot doesn't match.
     if cfg!(not(target_arch = "aarch64")) {
-        send_request_to_host(bt, HostRequest::Screenshot("gop_test"));
+        send_request_to_host(HostRequest::Screenshot("gop_test"));
     }
 }
 

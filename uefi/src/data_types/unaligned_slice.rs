@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use core::fmt::{self, Debug, Formatter};
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
@@ -28,11 +30,11 @@ impl<'a, T: Copy> UnalignedSlice<'a, T> {
     /// The `data` pointer must point to a packed array of at least
     /// `len` elements of type `T`. The pointer must remain valid for as
     /// long as the `'a` lifetime.
-    pub unsafe fn new(data: *const T, len: usize) -> Self {
+    pub const unsafe fn new(data: *const T, len: usize) -> Self {
         Self {
             data,
             len,
-            _phantom_lifetime: PhantomData::default(),
+            _phantom_lifetime: PhantomData,
         }
     }
 
@@ -40,6 +42,12 @@ impl<'a, T: Copy> UnalignedSlice<'a, T> {
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.len == 0
+    }
+
+    /// Get the underlying pointer, which may be unaligned.
+    #[must_use]
+    pub const fn as_ptr(&self) -> *const T {
+        self.data
     }
 
     /// Returns the number of elements in the slice.
@@ -51,7 +59,7 @@ impl<'a, T: Copy> UnalignedSlice<'a, T> {
     /// Returns the element at `index`, or `None` if the `index` is out
     /// of bounds.
     #[must_use]
-    pub fn get(&self, index: usize) -> Option<T> {
+    pub const fn get(&self, index: usize) -> Option<T> {
         if index < self.len {
             Some(unsafe { self.data.add(index).read_unaligned() })
         } else {
@@ -128,7 +136,7 @@ impl<'a, T: Copy> UnalignedSlice<'a, T> {
     }
 }
 
-impl<'a, T: Copy + Debug> Debug for UnalignedSlice<'a, T> {
+impl<T: Copy + Debug> Debug for UnalignedSlice<'_, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_list().entries(self.iter()).finish()
     }
@@ -169,7 +177,7 @@ pub struct UnalignedSliceIntoIter<'a, T: Copy> {
     index: usize,
 }
 
-impl<'a, T: Copy> Iterator for UnalignedSliceIntoIter<'a, T> {
+impl<T: Copy> Iterator for UnalignedSliceIntoIter<'_, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<T> {
@@ -186,7 +194,7 @@ pub struct UnalignedSliceIter<'a, T: Copy> {
     index: usize,
 }
 
-impl<'a, T: Copy> Iterator for UnalignedSliceIter<'a, T> {
+impl<T: Copy> Iterator for UnalignedSliceIter<'_, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<T> {

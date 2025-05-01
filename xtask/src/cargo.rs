@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use crate::arch::UefiArch;
 use anyhow::{bail, Result};
 use std::env;
@@ -10,32 +12,26 @@ pub enum Package {
     UefiApp,
     UefiMacros,
     UefiRaw,
-    UefiServices,
     UefiTestRunner,
     Xtask,
 }
 
 impl Package {
-    fn as_str(self) -> &'static str {
+    /// Get package name.
+    fn name(self) -> &'static str {
         match self {
             Self::Uefi => "uefi",
             Self::UefiApp => "uefi_app",
             Self::UefiMacros => "uefi-macros",
             Self::UefiRaw => "uefi-raw",
-            Self::UefiServices => "uefi-services",
             Self::UefiTestRunner => "uefi-test-runner",
             Self::Xtask => "xtask",
         }
     }
 
-    /// All published packages.
+    /// All published packages, in the order that publishing should occur.
     pub fn published() -> Vec<Package> {
-        vec![
-            Self::Uefi,
-            Self::UefiMacros,
-            Self::UefiRaw,
-            Self::UefiServices,
-        ]
+        vec![Self::UefiRaw, Self::UefiMacros, Self::Uefi]
     }
 
     /// All the packages except for xtask.
@@ -45,7 +41,6 @@ impl Package {
             Self::UefiApp,
             Self::UefiMacros,
             Self::UefiRaw,
-            Self::UefiServices,
             Self::UefiTestRunner,
         ]
     }
@@ -56,14 +51,11 @@ pub enum Feature {
     // `uefi` features.
     Alloc,
     GlobalAllocator,
+    LogDebugcon,
     Logger,
-    PanicOnLoggerErrors,
     Unstable,
-
-    // `uefi-services` features.
     PanicHandler,
     Qemu,
-    ServicesLogger,
 
     // `uefi-test-runner` features.
     DebugSupport,
@@ -79,13 +71,11 @@ impl Feature {
         match self {
             Self::Alloc => "alloc",
             Self::GlobalAllocator => "global_allocator",
+            Self::LogDebugcon => "log-debugcon",
             Self::Logger => "logger",
-            Self::PanicOnLoggerErrors => "panic-on-logger-errors",
             Self::Unstable => "unstable",
-
-            Self::PanicHandler => "uefi-services/panic_handler",
-            Self::Qemu => "uefi-services/qemu",
-            Self::ServicesLogger => "uefi-services/logger",
+            Self::PanicHandler => "panic_handler",
+            Self::Qemu => "qemu",
 
             Self::DebugSupport => "uefi-test-runner/debug_support",
             Self::MultiProcessor => "uefi-test-runner/multi_processor",
@@ -102,11 +92,12 @@ impl Feature {
             Package::Uefi => vec![
                 Self::Alloc,
                 Self::GlobalAllocator,
+                Self::LogDebugcon,
                 Self::Logger,
-                Self::PanicOnLoggerErrors,
                 Self::Unstable,
+                Self::PanicHandler,
+                Self::Qemu,
             ],
-            Package::UefiServices => vec![Self::PanicHandler, Self::Qemu, Self::ServicesLogger],
             Package::UefiTestRunner => {
                 vec![
                     Self::DebugSupport,
@@ -126,7 +117,7 @@ impl Feature {
     /// - `include_unstable` - add all functionality behind the `unstable` feature
     /// - `runtime_features` - add all functionality that effect the runtime of Rust
     pub fn more_code(include_unstable: bool, runtime_features: bool) -> Vec<Self> {
-        let mut base_features = vec![Self::Alloc, Self::Logger];
+        let mut base_features = vec![Self::Alloc, Self::LogDebugcon, Self::Logger];
         if include_unstable {
             base_features.extend([Self::Unstable])
         }
@@ -197,6 +188,10 @@ impl TargetTypes {
 pub enum CargoAction {
     Build,
     Clippy,
+    Coverage {
+        lcov: bool,
+        open: bool,
+    },
     Doc {
         open: bool,
         document_private_items: bool,
@@ -221,12 +216,28 @@ fn sanitized_path(orig_path: OsString) -> OsString {
     env::join_paths(sanitized_paths).expect("invalid PATH")
 }
 
-/// Cargo automatically sets some env vars that can prevent the
-/// channel arg (e.g. "+nightly") from working. Unset them in the
-/// child's environment.
-pub fn fix_nested_cargo_env(cmd: &mut Command) {
+/// Update a command env to make nested cargo invocations work correctly.
+///
+/// Cargo automatically sets some env vars that cause problems with nested cargo
+/// invocations. In particular, these env vars can:
+/// * Cause unwanted rebuilds, e.g. running `cargo xtask test` multiple times
+///   will rebuild every time because cached dependencies are marked as stale.
+/// * Prevent channels args (e.g. "+nightly") from working.
+///
+/// Some related issues:
+/// * <https://github.com/rust-lang/cargo/issues/15099>
+/// * <https://github.com/rust-lang/rustup/issues/3031>
+fn fix_nested_cargo_env(cmd: &mut Command) {
     cmd.env_remove("RUSTC");
     cmd.env_remove("RUSTDOC");
+
+    // Clear all vars starting with `CARGO`.
+    for (name, _) in env::vars() {
+        if name.starts_with("CARGO") {
+            cmd.env_remove(name);
+        }
+    }
+
     let orig_path = env::var_os("PATH").unwrap_or_default();
     cmd.env("PATH", sanitized_path(orig_path));
 }
@@ -262,6 +273,17 @@ impl Cargo {
                     tool_args.extend(["-D", "warnings"]);
                 }
             }
+            CargoAction::Coverage { lcov, open } => {
+                action = "llvm-cov";
+                if lcov {
+                    extra_args.extend(["--lcov", "--output-path", "target/lcov"]);
+                } else {
+                    extra_args.push("--html");
+                }
+                if open {
+                    extra_args.push("--open");
+                }
+            }
             CargoAction::Doc {
                 open,
                 document_private_items,
@@ -285,12 +307,31 @@ impl Cargo {
             }
             CargoAction::Test => {
                 action = "test";
+
+                // Ensure that uefi-macros trybuild tests work regardless of
+                // whether RUSTFLAGS is set.
+                //
+                // The trybuild tests run `rustc` with `--verbose`, which
+                // affects error output. This flag is set via
+                // `--config=build.rustflags` [1], but that will be ignored if
+                // the RUSTFLAGS env var is set. Compensate by appending
+                // `--verbose` to the var in that case.
+                //
+                // [1]: https://github.com/dtolnay/trybuild/blob/b1b7064b7ad11e0ab563e9eb843651d86e4545b7/src/cargo.rs#L44
+                if let Ok(mut rustflags) = env::var("RUSTFLAGS") {
+                    rustflags.push_str(" --verbose");
+                    cmd.env("RUSTFLAGS", rustflags);
+                }
             }
         };
         cmd.arg(action);
         if let Some(sub_action) = sub_action {
             cmd.arg(sub_action);
         }
+
+        // Turn off default features so that `--feature-permutations` can test
+        // with each feature enabled and disabled.
+        cmd.arg("--no-default-features");
 
         if self.release {
             cmd.arg("--release");
@@ -304,7 +345,7 @@ impl Cargo {
             bail!("packages cannot be empty");
         }
         for package in &self.packages {
-            cmd.args(["--package", package.as_str()]);
+            cmd.args(["--package", package.name()]);
         }
 
         if !self.features.is_empty() {
@@ -336,19 +377,19 @@ mod tests {
     fn test_comma_separated_features() {
         assert_eq!(
             Feature::comma_separated_string(&Feature::more_code(false, false)),
-            "alloc,logger"
+            "alloc,log-debugcon,logger"
         );
         assert_eq!(
             Feature::comma_separated_string(&Feature::more_code(false, true)),
-            "alloc,logger,global_allocator"
+            "alloc,log-debugcon,logger,global_allocator"
         );
         assert_eq!(
             Feature::comma_separated_string(&Feature::more_code(true, false)),
-            "alloc,logger,unstable"
+            "alloc,log-debugcon,logger,unstable"
         );
         assert_eq!(
             Feature::comma_separated_string(&Feature::more_code(true, true)),
-            "alloc,logger,unstable,global_allocator"
+            "alloc,log-debugcon,logger,unstable,global_allocator"
         );
     }
 
@@ -379,7 +420,7 @@ mod tests {
         };
         assert_eq!(
             command_to_string(&cargo.command().unwrap()),
-            "RUSTDOCFLAGS=-Dwarnings cargo doc --package uefi --package xtask --features global_allocator --no-deps --document-private-items --open"
+            "RUSTDOCFLAGS=-Dwarnings cargo doc --no-default-features --package uefi --package xtask --features global_allocator --no-deps --document-private-items --open"
         );
     }
 }

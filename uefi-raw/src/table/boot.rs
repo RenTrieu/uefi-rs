@@ -1,12 +1,16 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! UEFI services available during boot.
 
 use crate::protocol::device_path::DevicePathProtocol;
 use crate::table::Header;
-use crate::{Char16, Event, Guid, Handle, PhysicalAddress, Status, VirtualAddress};
+use crate::{Boolean, Char16, Event, Guid, Handle, PhysicalAddress, Status, VirtualAddress};
 use bitflags::bitflags;
 use core::ffi::c_void;
+use core::ops::RangeInclusive;
 
 /// Table of pointers to all the boot services.
+#[derive(Debug)]
 #[repr(C)]
 pub struct BootServices {
     pub header: Header,
@@ -45,7 +49,8 @@ pub struct BootServices {
         notify_ctx: *mut c_void,
         out_event: *mut Event,
     ) -> Status,
-    pub set_timer: unsafe extern "efiapi" fn(event: Event, ty: u32, trigger_time: u64) -> Status,
+    pub set_timer:
+        unsafe extern "efiapi" fn(event: Event, ty: TimerDelay, trigger_time: u64) -> Status,
     pub wait_for_event: unsafe extern "efiapi" fn(
         number_of_events: usize,
         events: *mut Event,
@@ -60,18 +65,18 @@ pub struct BootServices {
         handle: *mut Handle,
         guid: *const Guid,
         interface_type: InterfaceType,
-        interface: *mut c_void,
+        interface: *const c_void,
     ) -> Status,
     pub reinstall_protocol_interface: unsafe extern "efiapi" fn(
         handle: Handle,
         protocol: *const Guid,
-        old_interface: *mut c_void,
-        new_interface: *mut c_void,
+        old_interface: *const c_void,
+        new_interface: *const c_void,
     ) -> Status,
     pub uninstall_protocol_interface: unsafe extern "efiapi" fn(
         handle: Handle,
         protocol: *const Guid,
-        interface: *mut c_void,
+        interface: *const c_void,
     ) -> Status,
     pub handle_protocol: unsafe extern "efiapi" fn(
         handle: Handle,
@@ -101,7 +106,7 @@ pub struct BootServices {
 
     // Image services
     pub load_image: unsafe extern "efiapi" fn(
-        boot_policy: u8,
+        boot_policy: Boolean,
         parent_image_handle: Handle,
         device_path: *const DevicePathProtocol,
         source_buffer: *const u8,
@@ -138,7 +143,7 @@ pub struct BootServices {
         controller: Handle,
         driver_image: Handle,
         remaining_device_path: *const DevicePathProtocol,
-        recursive: bool,
+        recursive: Boolean,
     ) -> Status,
     pub disconnect_controller: unsafe extern "efiapi" fn(
         controller: Handle,
@@ -187,11 +192,28 @@ pub struct BootServices {
         out_proto: *mut *mut c_void,
     ) -> Status,
 
-    // These two function pointers require the `c_variadic` feature, which is
-    // not yet available in stable Rust:
-    // https://github.com/rust-lang/rust/issues/44930
-    pub install_multiple_protocol_interfaces: usize,
-    pub uninstall_multiple_protocol_interfaces: usize,
+    /// Warning: this function pointer is declared as `extern "C"` rather than
+    /// `extern "efiapi". That means it will work correctly when called from a
+    /// UEFI target (`*-unknown-uefi`), but will not work when called from a
+    /// target with a different calling convention such as
+    /// `x86_64-unknown-linux-gnu`.
+    ///
+    /// Support for C-variadics with `efiapi` requires the unstable
+    /// [`extended_varargs_abi_support`](https://github.com/rust-lang/rust/issues/100189)
+    /// feature.
+    pub install_multiple_protocol_interfaces:
+        unsafe extern "C" fn(handle: *mut Handle, ...) -> Status,
+
+    /// Warning: this function pointer is declared as `extern "C"` rather than
+    /// `extern "efiapi". That means it will work correctly when called from a
+    /// UEFI target (`*-unknown-uefi`), but will not work when called from a
+    /// target with a different calling convention such as
+    /// `x86_64-unknown-linux-gnu`.
+    ///
+    /// Support for C-variadics with `efiapi` requires the unstable
+    /// [`extended_varargs_abi_support`](https://github.com/rust-lang/rust/issues/100189)
+    /// feature.
+    pub uninstall_multiple_protocol_interfaces: unsafe extern "C" fn(handle: Handle, ...) -> Status,
 
     // CRC services
     pub calculate_crc32:
@@ -308,12 +330,30 @@ bitflags! {
     }
 }
 
-/// A structure describing a region of memory.
+/// A structure describing a region of memory. This type corresponds to [version]
+/// of this struct in the UEFI spec and is always bound to a corresponding
+/// UEFI memory map.
+///
+/// # UEFI pitfalls
+/// As of May 2024:
+/// The memory descriptor struct might be extended in the future by a new UEFI
+/// spec revision, which will be reflected in another `version` of that
+/// descriptor. The version is reported when using `get_memory_map` of
+/// [`BootServices`].
+///
+/// Also note that you **must never** work with `size_of::<MemoryDescriptor>`
+/// but always with `desc_size`, which is reported when using  `get_memory_map`
+/// as well [[0]]. For example, although the actual size is of version 1
+/// descriptors is `40`, the reported `desc_size` is `48`.
+///
+/// [version]: MemoryDescriptor::VERSION
+/// [0]: https://github.com/tianocore/edk2/blob/7142e648416ff5d3eac6c6d607874805f5de0ca8/MdeModulePkg/Core/PiSmmCore/Page.c#L1059
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(C)]
 pub struct MemoryDescriptor {
     /// Type of memory occupying this range.
     pub ty: MemoryType,
+    // Implicit 32-bit padding.
     /// Starting physical address.
     pub phys_start: PhysicalAddress,
     /// Starting virtual address.
@@ -330,8 +370,8 @@ impl MemoryDescriptor {
 }
 
 impl Default for MemoryDescriptor {
-    fn default() -> MemoryDescriptor {
-        MemoryDescriptor {
+    fn default() -> Self {
+        Self {
             ty: MemoryType::RESERVED,
             phys_start: 0,
             virt_start: 0,
@@ -345,12 +385,11 @@ newtype_enum! {
 /// The type of a memory range.
 ///
 /// UEFI allows firmwares and operating systems to introduce new memory types
-/// in the 0x70000000..0xFFFFFFFF range. Therefore, we don't know the full set
+/// in the `0x7000_0000..=0xFFFF_FFFF` range. Therefore, we don't know the full set
 /// of memory types at compile time, and it is _not_ safe to model this C enum
 /// as a Rust enum.
-#[derive(PartialOrd, Ord, Hash)]
 pub enum MemoryType: u32 => {
-    /// This enum variant is not used.
+    /// Not usable.
     RESERVED                =  0,
     /// The code portions of a loaded UEFI application.
     LOADER_CODE             =  1,
@@ -386,18 +425,32 @@ pub enum MemoryType: u32 => {
     PAL_CODE                = 13,
     /// Memory region which is usable and is also non-volatile.
     PERSISTENT_MEMORY       = 14,
+    /// Memory that must be accepted by the boot target before it can be used.
+    UNACCEPTED              = 15,
+    /// End of the defined memory types. Higher values are possible though, see
+    /// [`MemoryType::RESERVED_FOR_OEM`] and [`MemoryType::RESERVED_FOR_OS_LOADER`].
+    MAX                     = 16,
 }}
 
 impl MemoryType {
-    /// Construct a custom `MemoryType`. Values in the range `0x80000000..=0xffffffff` are free for use if you are
+    /// Range reserved for OEM use.
+    pub const RESERVED_FOR_OEM: RangeInclusive<u32> = 0x7000_0000..=0x7fff_ffff;
+
+    /// Range reserved for OS loaders.
+    pub const RESERVED_FOR_OS_LOADER: RangeInclusive<u32> = 0x8000_0000..=0xffff_ffff;
+
+    /// Construct a custom `MemoryType`. Values in the range `0x8000_0000..=0xffff_ffff` are free for use if you are
     /// an OS loader.
+    ///
+    /// **Warning**: Some EFI firmware versions (e.g., OVMF r11337) may crash or [behave incorrectly](https://wiki.osdev.org/UEFI#My_bootloader_hangs_if_I_use_user_defined_EFI_MEMORY_TYPE_values) when using a custom `MemoryType`.
     #[must_use]
-    pub const fn custom(value: u32) -> MemoryType {
+    pub const fn custom(value: u32) -> Self {
         assert!(value >= 0x80000000);
-        MemoryType(value)
+        Self(value)
     }
 }
 
+#[derive(Debug)]
 #[repr(C)]
 pub struct OpenProtocolInformationEntry {
     pub agent_handle: Handle,
@@ -430,3 +483,17 @@ pub enum Tpl: usize => {
     /// Even processor interrupts are disable at this level.
     HIGH_LEVEL  = 31,
 }}
+
+/// Size in bytes of a UEFI page.
+///
+/// Note that this is not necessarily the processor's page size. The UEFI page
+/// size is always 4 KiB.
+pub const PAGE_SIZE: usize = 4096;
+
+newtype_enum! {
+    pub enum TimerDelay: i32 => {
+        CANCEL = 0,
+        PERIODIC = 1,
+        RELATIVE = 2,
+    }
+}

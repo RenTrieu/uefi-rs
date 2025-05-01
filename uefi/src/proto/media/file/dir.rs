@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use super::{File, FileHandle, FileInfo, FromUefi, RegularFile};
 use crate::data_types::Align;
 use crate::Result;
@@ -22,8 +24,8 @@ impl Directory {
     /// This function should only be called on files which ARE directories,
     /// doing otherwise is unsafe.
     #[must_use]
-    pub unsafe fn new(handle: FileHandle) -> Self {
-        Self(RegularFile::new(handle))
+    pub const unsafe fn new(handle: FileHandle) -> Self {
+        Self(unsafe { RegularFile::new(handle) })
     }
 
     /// Read the next directory entry.
