@@ -1,6 +1,18 @@
 # uefi - [Unreleased]
 
 ## Added
+- Added `ConfigTableEntry::MEMORY_ATTRIBUTES_GUID` and `ConfigTableEntry::IMAGE_SECURITY_DATABASE_GUID`.
+
+## Changed
+- **Breaking:** `boot::stall` now take `core::time::Duration` instead of `usize`.
+- `table::cfg::*_GUID` constants now deprecated. Use `ConfigTableEntry::*_GUID` instead.
+- `system::with_config_table`, `system::with_stdin`, `system::with_stdout` and `system::with_stderr`
+  now take mutably closure.
+
+
+# uefi - 0.35.0 (2025-05-04)
+
+## Added
 - Added `boot::signal_event`.
 - Added conversions between `proto::network::IpAddress` and `core::net` types.
 - Added conversions between `proto::network::MacAddress` and the `[u8; 6]` type that's more commonly used to represent MAC addresses.
@@ -42,7 +54,7 @@
 - The `Display` impl for `CStr8` now excludes the trailing null character.
 - `VariableKeys` initializes with a larger name buffer to work around firmware
   bugs on some devices.
-- The UEFI `allocator::Allocator` has been optimized for page-aligned 
+- The UEFI `allocator::Allocator` has been optimized for page-aligned
   allocations.
 
 

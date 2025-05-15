@@ -187,12 +187,16 @@ pub struct QemuOpt {
     pub tpm: Option<TpmVersion>,
 
     /// Path of an OVMF code file.
-    #[clap(long, action)]
+    #[clap(long, action, env)]
     pub ovmf_code: Option<PathBuf>,
 
     /// Path of an OVMF vars file.
-    #[clap(long, action)]
+    #[clap(long, action, env)]
     pub ovmf_vars: Option<PathBuf>,
+
+    /// Path of an OVMF shell application.
+    #[clap(long, action, env)]
+    pub ovmf_shell: Option<PathBuf>,
 
     /// Run an example instead of the main binary.
     #[clap(long, action)]
