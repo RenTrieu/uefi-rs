@@ -1,6 +1,6 @@
 //! EFI Shell Protocol v2.2
 
-use core::{ffi::c_void, marker::PhantomData, mem::MaybeUninit, ptr::NonNull};
+use core::{ffi::c_void, marker::PhantomData, mem::MaybeUninit, ptr};
 
 use uefi_macros::unsafe_protocol;
 
@@ -18,7 +18,9 @@ pub struct Shell {
         environment: *const *const CStr16,
         out_status: *mut Status,
     ) -> Status,
-    get_env: usize,
+    get_env: extern "efiapi" fn(
+        name: *const Char16,
+    ) -> *const Char16,
     set_env: usize,
     get_alias: usize,
     set_alias: usize,
@@ -29,7 +31,7 @@ pub struct Shell {
     get_file_path_from_device_path: usize,
     set_map: usize,
 
-    get_cur_dir: extern "efiapi" fn(file_system_mapping: *const Char16) -> *const CStr16,
+    get_cur_dir: extern "efiapi" fn(file_system_mapping: *const Char16) -> *const Char16,
     set_cur_dir: usize,
     open_file_list: usize,
     free_file_list: extern "efiapi" fn(file_list: *mut *mut ShellFileInfo),
@@ -49,7 +51,7 @@ pub struct Shell {
     create_file: extern "efiapi" fn(
         file_name: &CStr16,
         file_attribs: u64,
-        out_file_handle: *mut ShellFileHandle,
+        out_file_handle: ShellFileHandle,
     ) -> Status,
     read_file: usize,
     write_file: usize,
@@ -66,7 +68,10 @@ pub struct Shell {
         file_dir_handle: ShellFileHandle,
         out_file_list: *mut *mut ShellFileInfo,
     ) -> Status,
-    get_file_size: usize,
+    get_file_size: extern "efiapi" fn(
+        file_handle: ShellFileHandle,
+        size: *mut u64
+    ) -> Status,
 
     open_root: usize,
     open_root_by_handle: usize,
@@ -109,6 +114,29 @@ impl Shell {
         .to_result_with_val(|| unsafe { out_status.assume_init() })
     }
 
+    /// Gets the environment variable or list of environment variables
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The environment variable name of which to retrieve the
+    ///            value
+    ///            If None, will return all defined shell environment
+    ///            variables
+    ///
+    /// # Returns
+    ///
+    /// * `Some(env_value)` - Value of the environment variable
+    /// * `None` - Environment variable doesn't exist
+    pub fn get_env<'a>(&'a self, name: Option<&CStr16>) -> Option<&'a CStr16> {
+        let name_ptr: *const Char16 = name.map_or(core::ptr::null(), |x| (x as *const CStr16).cast());
+        let var_val = (self.get_env)(name_ptr);
+        if var_val.is_null() {
+            None
+        } else {
+            unsafe { Some(CStr16::from_ptr(var_val)) }
+        }
+    }
+
     /// TODO
     #[must_use]
     pub fn get_cur_dir<'a>(&'a self, file_system_mapping: Option<&CStr16>) -> Option<&'a CStr16> {
@@ -118,7 +146,7 @@ impl Shell {
         if cur_dir.is_null() {
             None
         } else {
-            unsafe { Some(&*cur_dir) }
+            unsafe { Some(CStr16::from_ptr(cur_dir)) }
         }
     }
 
@@ -146,20 +174,30 @@ impl Shell {
         (self.close_file)(file_handle).to_result()
     }
 
-    /// TODO
+    /// Creates a file or directory by name
+    ///
+    /// # Arguments
+    ///
+    /// * `file_name` - Name of the file to be created (null terminated)
+    /// * `file_attribs` - Attributes of the new file
+    /// * `file_handle` - On return, points to the created file/directory's
+    /// handle
     pub fn create_file(
         &self,
         file_name: &CStr16,
         file_attribs: u64,
-    ) -> Result<Option<ShellFileHandle>> {
+    ) -> Result<ShellFileHandle> {
         // TODO: Find out how we could take a &str instead, or maybe AsRef<str>, though I think it needs `alloc`
         // the returned handle can possibly be NULL, so we need to wrap `ShellFileHandle` in an `Option`
-        let mut out_file_handle: MaybeUninit<Option<ShellFileHandle>> = MaybeUninit::zeroed();
+        //let mut out_file_handle: MaybeUninit<Option<ShellFileHandle>> = MaybeUninit::zeroed();
+        // let mut file_handle: ShellFileHandle;
+        let file_handle = ptr::null();
 
-        (self.create_file)(file_name, file_attribs, out_file_handle.as_mut_ptr().cast())
+        (self.create_file)(file_name, file_attribs, file_handle)
+        .to_result_with_val(|| file_handle )
             // Safety: if this call is successful, `out_file_handle`
             // will always be initialized and valid.
-            .to_result_with_val(|| unsafe { out_file_handle.assume_init() })
+            // .to_result_with_val(|| unsafe { out_file_handle.assume_init() })
     }
 
     /// TODO
@@ -233,12 +271,34 @@ impl Shell {
     pub fn flush_file(&self, file_handle: ShellFileHandle) -> Result<()> {
         (self.flush_file)(file_handle).to_result()
     }
+
+    /// Gets the size of a file
+    ///
+    /// # Arguments
+    ///
+    /// * `file_handle` - Handle to the file of which the size will be retrieved
+    /// * `size` - Pointer to u64 to read into
+    ///
+    /// # Errors
+    ///
+    /// * [`STATUS::EFI_DEVICE_ERROR] The file could not be accessed
+    pub fn get_file_size(&self, file_handle: ShellFileHandle, size: *mut u64) -> Result<()> {
+        (self.get_file_size)(file_handle, size).to_result()
+    }
 }
 
 /// TODO
-#[repr(transparent)]
-#[derive(Debug)]
-pub struct ShellFileHandle(NonNull<c_void>);
+// #[repr(transparent)]
+// #[derive(Debug)]
+pub type ShellFileHandle = *const c_void;
+// pub struct ShellFileHandle(c_void);
+//
+// impl ShellFileHandle {
+//     /// Creates a new ShellFileHandle from a given c_void pointer
+//     pub const unsafe fn new(ptr: c_void) -> Self {
+//         Self(ptr)
+//     }
+// }
 
 /// TODO
 #[repr(C)]
