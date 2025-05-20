@@ -19,6 +19,17 @@ pub fn test() {
     let cur_env_str = shell.get_env(None).expect("Could not get environment variable");
     info!("cur_env_str size: {}", cur_env_str.num_chars());
     info!("cur_env_str: {}", cur_env_str);
+
+    /* Testing setting and getting a specific environment variable */
+    let mut test_env_buf = [0u16; 32];
+    let test_var = CStr16::from_str_with_buf("test_var", &mut test_env_buf).unwrap();
+    let mut test_val_buf = [0u16; 32];
+    let test_val = CStr16::from_str_with_buf("test_val", &mut test_val_buf).unwrap();
+    assert!(shell.get_env(Some(test_var)).is_none());
+    shell.set_env(test_var, test_val, false);
+    let cur_env_str = shell.get_env(Some(test_var)).expect("Could not get environment variable");
+    assert_eq!(cur_env_str, test_val);
+
     // for (i, c) in cur_env_str.iter().enumerate() {
     //     info!("cur_env_str: i: {}, c: {}", i, c);
     // }
@@ -26,9 +37,13 @@ pub fn test() {
     // let mut cur_fs_buf = [0u16; 32];
     // let cur_fs_str = CStr16::from_str_with_buf("", &mut cur_fs_buf).unwrap();
     // info!("cur_fs_str size 1: {}", cur_fs_str.num_chars());
-    let cur_fs_str = shell.get_cur_dir(None).expect("Could not get the current file system mapping");
-    info!("cur_fs_str size: {}", cur_fs_str.num_chars());
-    info!("cur_fs_str: {}", cur_fs_str);
+
+
+    // let cur_fs_str = shell.get_cur_dir(None).expect("Could not get the current file system mapping");
+    // info!("cur_fs_str size: {}", cur_fs_str.num_chars());
+    // info!("cur_fs_str: {}", cur_fs_str);
+
+
     // for (i, c) in cur_fs_str.iter().enumerate() {
     //     info!("cur_fs_str: i: {}, c: {}", i, c);
     // }

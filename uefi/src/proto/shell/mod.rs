@@ -21,7 +21,11 @@ pub struct Shell {
     get_env: extern "efiapi" fn(
         name: *const Char16,
     ) -> *const Char16,
-    set_env: usize,
+    set_env: extern "efiapi" fn(
+        name: *const Char16,
+        value: *const Char16,
+        volatile: bool,
+    ) -> Status,
     get_alias: usize,
     set_alias: usize,
     get_help_text: usize,
@@ -135,6 +139,24 @@ impl Shell {
         } else {
             unsafe { Some(CStr16::from_ptr(var_val)) }
         }
+    }
+
+    /// Sets the environment variable
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The environment variable for which to set the value
+    /// * `value` - The new value of the environment variable
+    /// * `volatile` - Indicates whether or not the variable is volatile or
+    ///                not
+    ///
+    /// # Returns
+    ///
+    /// * `Status::SUCCESS` The variable was successfully set
+    pub fn set_env(&self, name: &CStr16, value: &CStr16, volatile: bool) -> Status {
+        let name_ptr: *const Char16 = (name as *const CStr16).cast();
+        let value_ptr: *const Char16 = (value as *const CStr16).cast();
+        (self.set_env)(name_ptr, value_ptr, volatile)
     }
 
     /// TODO
