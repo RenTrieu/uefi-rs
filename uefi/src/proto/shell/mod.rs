@@ -22,14 +22,9 @@ pub struct Shell {
         environment: *const *const CStr16,
         out_status: *mut Status,
     ) -> Status,
-    get_env: extern "efiapi" fn(
-        name: *const Char16,
-    ) -> *const Char16,
-    set_env: extern "efiapi" fn(
-        name: *const Char16,
-        value: *const Char16,
-        volatile: bool,
-    ) -> Status,
+    get_env: extern "efiapi" fn(name: *const Char16) -> *const Char16,
+    set_env:
+        extern "efiapi" fn(name: *const Char16, value: *const Char16, volatile: bool) -> Status,
     get_alias: usize,
     set_alias: usize,
     get_help_text: usize,
@@ -76,10 +71,7 @@ pub struct Shell {
         file_dir_handle: ShellFileHandle,
         out_file_list: *mut *mut ShellFileInfo,
     ) -> Status,
-    get_file_size: extern "efiapi" fn(
-        file_handle: ShellFileHandle,
-        size: *mut u64
-    ) -> Status,
+    get_file_size: extern "efiapi" fn(file_handle: ShellFileHandle, size: *mut u64) -> Status,
 
     open_root: usize,
     open_root_by_handle: usize,
@@ -164,6 +156,7 @@ impl Shell {
     /// # Returns
     ///
     /// * `Some(env_value)` - Value of the environment variable
+    /// * `Some(Vec<env_names>)` - Vector of environment variable names
     /// * `None` - Environment variable doesn't exist
     pub fn get_env<'a>(&'a self, name: Option<&CStr16>) -> Option<EnvOutput<'a>> {
         match name {
@@ -178,7 +171,7 @@ impl Shell {
             }
             None => {
                 let mut env_vec = Vec::new();
-                let cur_env_ptr = (self.get_env)(core::ptr::null());
+                let cur_env_ptr = (self.get_env)(ptr::null());
 
                 let mut cur_start = cur_env_ptr;
                 let mut cur_len = 0;
@@ -189,14 +182,13 @@ impl Shell {
                     while null_count <= 1 {
                         if (*(cur_env_ptr.add(i))) == Char16::from_u16_unchecked(0) {
                             if cur_len > 0 {
-                                // TODO: Optimize this to directly convert a
-                                // Char16 slice to CStr16
-                                env_vec.push(CStr16::from_ptr(cur_start));
+                                env_vec.push(CStr16::from_char16_with_nul_unchecked(
+                                    &(*ptr::slice_from_raw_parts(cur_start, cur_len + 1)),
+                                ));
                             }
                             cur_len = 0;
                             null_count += 1;
-                        }
-                        else {
+                        } else {
                             if null_count > 0 {
                                 cur_start = cur_env_ptr.add(i);
                             }
@@ -274,22 +266,17 @@ impl Shell {
     /// * `file_attribs` - Attributes of the new file
     /// * `file_handle` - On return, points to the created file/directory's
     /// handle
-    pub fn create_file(
-        &self,
-        file_name: &CStr16,
-        file_attribs: u64,
-    ) -> Result<ShellFileHandle> {
+    pub fn create_file(&self, file_name: &CStr16, file_attribs: u64) -> Result<ShellFileHandle> {
         // TODO: Find out how we could take a &str instead, or maybe AsRef<str>, though I think it needs `alloc`
         // the returned handle can possibly be NULL, so we need to wrap `ShellFileHandle` in an `Option`
         //let mut out_file_handle: MaybeUninit<Option<ShellFileHandle>> = MaybeUninit::zeroed();
         // let mut file_handle: ShellFileHandle;
         let file_handle = ptr::null();
 
-        (self.create_file)(file_name, file_attribs, file_handle)
-        .to_result_with_val(|| file_handle )
-            // Safety: if this call is successful, `out_file_handle`
-            // will always be initialized and valid.
-            // .to_result_with_val(|| unsafe { out_file_handle.assume_init() })
+        (self.create_file)(file_name, file_attribs, file_handle).to_result_with_val(|| file_handle)
+        // Safety: if this call is successful, `out_file_handle`
+        // will always be initialized and valid.
+        // .to_result_with_val(|| unsafe { out_file_handle.assume_init() })
     }
 
     /// TODO
