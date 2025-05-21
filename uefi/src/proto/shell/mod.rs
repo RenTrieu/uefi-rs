@@ -1,5 +1,9 @@
 //! EFI Shell Protocol v2.2
 
+#![cfg(feature = "alloc")]
+
+use alloc::vec::Vec;
+
 use core::{ffi::c_void, marker::PhantomData, mem::MaybeUninit, ptr};
 
 use uefi_macros::unsafe_protocol;
@@ -96,6 +100,36 @@ impl core::fmt::Debug for Shell {
     }
 }
 
+/// Enum describing output options for get_env()
+///
+/// `EnvOutput::Val` - Value for a given variable
+/// `EnvOutput::VarVec` - Vec of current environment variables
+#[derive(Debug)]
+pub enum EnvOutput<'a> {
+    /// Value for a given variable
+    Val(&'a CStr16),
+    /// Vec of current environment variable names
+    Vec(Vec<&'a CStr16>),
+}
+
+impl<'a> EnvOutput<'a> {
+    /// Extracts the env var value from EnvOutput
+    pub fn val(self) -> Option<&'a CStr16> {
+        match self {
+            EnvOutput::Val(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Extracts the vector of variable names from EnvOutput
+    pub fn vec(self) -> Option<Vec<&'a CStr16>> {
+        match self {
+            EnvOutput::Vec(v) => Some(v),
+            _ => None,
+        }
+    }
+}
+
 impl Shell {
     /// TODO
     pub fn execute(
@@ -131,13 +165,49 @@ impl Shell {
     ///
     /// * `Some(env_value)` - Value of the environment variable
     /// * `None` - Environment variable doesn't exist
-    pub fn get_env<'a>(&'a self, name: Option<&CStr16>) -> Option<&'a CStr16> {
-        let name_ptr: *const Char16 = name.map_or(core::ptr::null(), |x| (x as *const CStr16).cast());
-        let var_val = (self.get_env)(name_ptr);
-        if var_val.is_null() {
-            None
-        } else {
-            unsafe { Some(CStr16::from_ptr(var_val)) }
+    pub fn get_env<'a>(&'a self, name: Option<&CStr16>) -> Option<EnvOutput<'a>> {
+        match name {
+            Some(n) => {
+                let name_ptr: *const Char16 = (n as *const CStr16).cast();
+                let var_val = (self.get_env)(name_ptr);
+                if var_val.is_null() {
+                    None
+                } else {
+                    unsafe { Some(EnvOutput::Val(CStr16::from_ptr(var_val))) }
+                }
+            }
+            None => {
+                let mut env_vec = Vec::new();
+                let cur_env_ptr = (self.get_env)(core::ptr::null());
+
+                let mut cur_start = cur_env_ptr;
+                let mut cur_len = 0;
+
+                let mut i = 0;
+                let mut null_count = 0;
+                unsafe {
+                    while null_count <= 1 {
+                        if (*(cur_env_ptr.add(i))) == Char16::from_u16_unchecked(0) {
+                            if cur_len > 0 {
+                                // TODO: Optimize this to directly convert a
+                                // Char16 slice to CStr16
+                                env_vec.push(CStr16::from_ptr(cur_start));
+                            }
+                            cur_len = 0;
+                            null_count += 1;
+                        }
+                        else {
+                            if null_count > 0 {
+                                cur_start = cur_env_ptr.add(i);
+                            }
+                            null_count = 0;
+                            cur_len += 1;
+                        }
+                        i += 1;
+                    }
+                }
+                Some(EnvOutput::Vec(env_vec))
+            }
         }
     }
 
